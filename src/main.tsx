@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import * as echarts from "echarts";
 import { CalendarClock, Check, Clock3, ListTree, RefreshCw, TimerReset } from "lucide-react";
-import type { IField, ITable } from "@lark-base-open/js-sdk";
+import type { IField, IFieldMeta, ITable } from "@lark-base-open/js-sdk";
 import "./styles.css";
 
 type TimerRun = {
@@ -15,7 +15,7 @@ type TimerRun = {
   durationSeconds: number;
 };
 
-type FieldMapping = {
+type LegacyFieldMapping = {
   tableName: string;
   taskName: string;
   startTime: string;
@@ -23,11 +23,52 @@ type FieldMapping = {
   durationSeconds: string;
 };
 
+type DataSourceConfig = {
+  tableId: string;
+  viewId: string;
+  taskNameFieldId: string;
+  startTimeFieldId: string;
+  endTimeFieldId: string;
+  durationSecondsFieldId: string;
+};
+
+type TableOption = {
+  id: string;
+  name: string;
+};
+
+type ViewOption = {
+  id: string;
+  name: string;
+};
+
+type FieldOption = {
+  id: string;
+  name: string;
+  type: number;
+};
+
+type BaseSchema = {
+  tables: TableOption[];
+  views: ViewOption[];
+  fields: FieldOption[];
+};
+
 type RuntimeMode = "mock" | "lark" | "error";
 type DashboardMode = "edit" | "view";
 type TimeWindow = "today" | "3d" | "7d" | "all" | "custom";
+type FieldRole = "taskName" | "startTime" | "endTime" | "durationSeconds";
 
-const defaultMapping: FieldMapping = {
+const emptySourceConfig: DataSourceConfig = {
+  tableId: "",
+  viewId: "",
+  taskNameFieldId: "",
+  startTimeFieldId: "",
+  endTimeFieldId: "",
+  durationSecondsFieldId: ""
+};
+
+const defaultLegacyMapping: LegacyFieldMapping = {
   tableName: "日统计",
   taskName: "任务名称结构化",
   startTime: "执行开始时间",
@@ -63,6 +104,9 @@ const palette = ["#58b7a4", "#ff8a65", "#6ea8fe", "#f2c94c", "#b388ff", "#ef6f8a
 const hourMs = 60 * 60 * 1000;
 const dayMs = 24 * hourMs;
 const axisPaddingMs = 30 * 60 * 1000;
+const textLikeFieldTypes = new Set([1, 3, 20, 1005]);
+const dateLikeFieldTypes = new Set([5, 1001, 1002]);
+const numberLikeFieldTypes = new Set([2, 20]);
 const timeWindowOptions: Array<{ key: TimeWindow; label: string }> = [
   { key: "today", label: "今天" },
   { key: "3d", label: "最近3天" },
@@ -201,46 +245,161 @@ function runOverlapsWindow(run: TimerRun, start: number, end: number): boolean {
   return parseTime(run.start) <= end && parseTime(run.end) >= start;
 }
 
-async function loadLarkRuns(mapping: FieldMapping): Promise<TimerRun[]> {
+function isSourceConfigReady(config: DataSourceConfig): boolean {
+  return Boolean(config.tableId && config.taskNameFieldId && config.startTimeFieldId && config.endTimeFieldId);
+}
+
+function fieldMatchesRole(field: FieldOption, role: FieldRole): boolean {
+  if (role === "startTime" || role === "endTime") {
+    return dateLikeFieldTypes.has(field.type);
+  }
+
+  if (role === "durationSeconds") {
+    return numberLikeFieldTypes.has(field.type);
+  }
+
+  return textLikeFieldTypes.has(field.type);
+}
+
+function fieldOptionsForRole(fields: FieldOption[], role: FieldRole): FieldOption[] {
+  return fields.filter((field) => fieldMatchesRole(field, role));
+}
+
+function findFieldByName(fields: FieldOption[], name: string, role: FieldRole): string {
+  return fields.find((field) => field.name === name && fieldMatchesRole(field, role))?.id ?? "";
+}
+
+function keepValidFieldId(fields: FieldOption[], fieldId: string, role: FieldRole): string {
+  return fields.find((field) => field.id === fieldId && fieldMatchesRole(field, role))?.id ?? "";
+}
+
+function getRecordDurationSeconds(start: string, end: string, durationText: string): number {
+  const fieldValue = Number(durationText || 0);
+  if (Number.isFinite(fieldValue) && fieldValue >= 0) {
+    return fieldValue;
+  }
+
+  const computed = Math.round((parseTime(end) - parseTime(start)) / 1000);
+  return Number.isFinite(computed) && computed >= 0 ? computed : 0;
+}
+
+function normalizeSourceConfig(
+  current: DataSourceConfig,
+  schema: BaseSchema,
+  legacyMapping: LegacyFieldMapping
+): DataSourceConfig {
+  const taskFields = fieldOptionsForRole(schema.fields, "taskName");
+  const dateFields = fieldOptionsForRole(schema.fields, "startTime");
+  const durationFields = fieldOptionsForRole(schema.fields, "durationSeconds");
+  const firstDateFieldId = dateFields[0]?.id ?? "";
+  const secondDateFieldId = dateFields.find((field) => field.id !== firstDateFieldId)?.id ?? firstDateFieldId;
+
+  return {
+    tableId: current.tableId || schema.tables[0]?.id || "",
+    viewId: current.viewId || schema.views[0]?.id || "",
+    taskNameFieldId:
+      keepValidFieldId(schema.fields, current.taskNameFieldId, "taskName") ||
+      findFieldByName(schema.fields, legacyMapping.taskName, "taskName") ||
+      taskFields[0]?.id ||
+      "",
+    startTimeFieldId:
+      keepValidFieldId(schema.fields, current.startTimeFieldId, "startTime") ||
+      findFieldByName(schema.fields, legacyMapping.startTime, "startTime") ||
+      firstDateFieldId,
+    endTimeFieldId:
+      keepValidFieldId(schema.fields, current.endTimeFieldId, "endTime") ||
+      findFieldByName(schema.fields, legacyMapping.endTime, "endTime") ||
+      secondDateFieldId,
+    durationSecondsFieldId:
+      keepValidFieldId(schema.fields, current.durationSecondsFieldId, "durationSeconds") ||
+      findFieldByName(schema.fields, legacyMapping.durationSeconds, "durationSeconds") ||
+      durationFields[0]?.id ||
+      ""
+  };
+}
+
+function isSameSourceConfig(left: DataSourceConfig, right: DataSourceConfig): boolean {
+  return (
+    left.tableId === right.tableId &&
+    left.viewId === right.viewId &&
+    left.taskNameFieldId === right.taskNameFieldId &&
+    left.startTimeFieldId === right.startTimeFieldId &&
+    left.endTimeFieldId === right.endTimeFieldId &&
+    left.durationSecondsFieldId === right.durationSecondsFieldId
+  );
+}
+
+async function loadBaseSchema(
+  config: DataSourceConfig,
+  legacyMapping: LegacyFieldMapping
+): Promise<{ schema: BaseSchema; config: DataSourceConfig }> {
   const sdk = await import("@lark-base-open/js-sdk");
   const tableList = await sdk.base.getTableList();
   const tables = tableList as ITable[];
-  const names = await Promise.all(
+  const tableOptions = await Promise.all(
     tables.map(async (item) => ({
-      table: item,
+      id: item.id,
       name: await item.getName()
     }))
   );
-  const table = names.find((item) => item.name === mapping.tableName)?.table ?? tables[0];
+  const tableId = config.tableId || tableOptions.find((item) => item.name === legacyMapping.tableName)?.id || tableOptions[0]?.id || "";
+  const table = tables.find((item) => item.id === tableId) ?? tables[0];
 
   if (!table) {
     throw new Error("当前 Base 没有可读取的数据表");
   }
 
-  const taskField = await table.getField<IField>(mapping.taskName);
-  const startField = await table.getField<IField>(mapping.startTime);
-  const endField = await table.getField<IField>(mapping.endTime);
-  const durationField = await table.getField<IField>(mapping.durationSeconds);
-  const recordList = await table.getRecordList();
+  const viewOptions = await Promise.all(
+    (await table.getViewList()).map(async (view) => ({
+      id: view.id,
+      name: await view.getName()
+    }))
+  );
+  const fieldOptions = (await table.getFieldMetaList()).map((field: IFieldMeta) => ({
+    id: field.id,
+    name: field.name,
+    type: field.type
+  }));
+  const schema = { tables: tableOptions, views: viewOptions, fields: fieldOptions };
+
+  return { schema, config: normalizeSourceConfig({ ...config, tableId: table.id }, schema, legacyMapping) };
+}
+
+async function loadLarkRuns(config: DataSourceConfig): Promise<TimerRun[]> {
+  if (!isSourceConfigReady(config)) {
+    throw new Error("请先选择数据表和字段");
+  }
+
+  const sdk = await import("@lark-base-open/js-sdk");
+  const table = await sdk.base.getTableById(config.tableId);
+  const taskField = await table.getFieldById<IField>(config.taskNameFieldId);
+  const startField = await table.getFieldById<IField>(config.startTimeFieldId);
+  const endField = await table.getFieldById<IField>(config.endTimeFieldId);
+  const durationField = config.durationSecondsFieldId
+    ? await table.getFieldById<IField>(config.durationSecondsFieldId)
+    : undefined;
   const activeView = await table
-    .getActiveView()
+    .getViewById(config.viewId)
     .catch(async () => (await table.getViewList())[0])
     .catch(() => undefined);
+  const recordIds = activeView
+    ? (await activeView.getVisibleRecordIdList()).filter((id): id is string => Boolean(id))
+    : await table.getRecordIdList();
   const rows: TimerRun[] = [];
 
-  for (const record of recordList) {
-    const taskName = await taskField.getCellString(record.id);
-    const start = await startField.getCellString(record.id);
-    const end = await endField.getCellString(record.id);
-    const durationText = await durationField.getCellString(record.id);
-    const durationSeconds = Number(durationText || 0);
+  for (const recordId of recordIds) {
+    const taskName = await taskField.getCellString(recordId);
+    const start = await startField.getCellString(recordId);
+    const end = await endField.getCellString(recordId);
+    const durationText = durationField ? await durationField.getCellString(recordId) : "";
+    const durationSeconds = getRecordDurationSeconds(start, end, durationText);
 
     if (!taskName || !start || !end || !Number.isFinite(durationSeconds) || durationSeconds < 0) {
       continue;
     }
 
     rows.push({
-      id: record.id ?? `${taskName}-${start}`,
+      id: recordId,
       tableId: table.id,
       viewId: activeView?.id,
       taskName,
@@ -253,7 +412,7 @@ async function loadLarkRuns(mapping: FieldMapping): Promise<TimerRun[]> {
   return rows.sort(byStartTime);
 }
 
-function useTimerRuns(mapping: FieldMapping) {
+function useTimerRuns(config: DataSourceConfig) {
   const [runs, setRuns] = useState<TimerRun[]>(mockRuns);
   const [mode, setMode] = useState<RuntimeMode>("mock");
   const [message, setMessage] = useState("本地预览，使用内置示例数据");
@@ -262,7 +421,7 @@ function useTimerRuns(mapping: FieldMapping) {
   const reload = async () => {
     setLoading(true);
     try {
-      const larkRuns = await loadLarkRuns(mapping);
+      const larkRuns = await loadLarkRuns(config);
       setRuns(larkRuns.length ? larkRuns : mockRuns);
       setMode(larkRuns.length ? "lark" : "mock");
       setMessage(larkRuns.length ? "" : "飞书返回为空，显示示例数据");
@@ -277,7 +436,14 @@ function useTimerRuns(mapping: FieldMapping) {
 
   useEffect(() => {
     void reload();
-  }, [mapping.tableName, mapping.taskName, mapping.startTime, mapping.endTime, mapping.durationSeconds]);
+  }, [
+    config.tableId,
+    config.viewId,
+    config.taskNameFieldId,
+    config.startTimeFieldId,
+    config.endTimeFieldId,
+    config.durationSecondsFieldId
+  ]);
 
   return { runs, mode, message, loading, reload };
 }
@@ -296,10 +462,12 @@ function useDashboardConfig() {
           dashboard.state === DashboardState.View || dashboard.state === DashboardState.FullScreen ? "view" : "edit"
         );
         const config = await dashboard.getConfig();
-        const savedMapping = config.customConfig?.fieldMapping as Partial<FieldMapping> | undefined;
-        if (savedMapping) {
-          window.dispatchEvent(new CustomEvent("timer-plugin-config", { detail: savedMapping }));
-        }
+        window.dispatchEvent(new CustomEvent("timer-plugin-config", {
+          detail: {
+            sourceConfig: config.customConfig?.sourceConfig,
+            fieldMapping: config.customConfig?.fieldMapping
+          }
+        }));
         await dashboard.setRendered();
       } catch {
         setDashboardMode("edit");
@@ -311,12 +479,12 @@ function useDashboardConfig() {
     };
   }, []);
 
-  const saveConfig = async (mapping: FieldMapping) => {
+  const saveConfig = async (config: DataSourceConfig) => {
     try {
       const { dashboard, ui, ToastType } = await import("@lark-base-open/js-sdk");
       await dashboard.saveConfig({
         dataConditions: [],
-        customConfig: { fieldMapping: mapping }
+        customConfig: { sourceConfig: config }
       });
       await dashboard.setRendered();
       setSaveMessage("已保存，可回到仪表盘查看");
@@ -328,6 +496,46 @@ function useDashboardConfig() {
   };
 
   return { dashboardMode, saveMessage, saveConfig };
+}
+
+function useBaseSchema(
+  config: DataSourceConfig,
+  legacyMapping: LegacyFieldMapping,
+  onConfigResolved: (config: DataSourceConfig) => void
+) {
+  const [schema, setSchema] = useState<BaseSchema>({ tables: [], views: [], fields: [] });
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    async function loadSchema() {
+      setLoading(true);
+      try {
+        const result = await loadBaseSchema(config, legacyMapping);
+        if (!active) return;
+        setSchema(result.schema);
+        setMessage("");
+        if (!isSameSourceConfig(config, result.config)) {
+          onConfigResolved(result.config);
+        }
+      } catch (error) {
+        if (!active) return;
+        setSchema({ tables: [], views: [], fields: [] });
+        setMessage(error instanceof Error ? error.message : "无法读取多维表格结构");
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    }
+    void loadSchema();
+    return () => {
+      active = false;
+    };
+  }, [config.tableId, legacyMapping.tableName]);
+
+  return { schema, loading, message };
 }
 
 function TimelineChart({
@@ -580,13 +788,22 @@ function TimelineChart({
 }
 
 function App() {
-  const [mapping, setMapping] = useState<FieldMapping>(defaultMapping);
+  const [sourceConfig, setSourceConfig] = useState<DataSourceConfig>(emptySourceConfig);
+  const [legacyMapping, setLegacyMapping] = useState<LegacyFieldMapping>(defaultLegacyMapping);
   const [hiddenTasks, setHiddenTasks] = useState<Set<string>>(() => new Set());
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("today");
   const [customRangeDraft, setCustomRangeDraft] = useState<TimeRange>(() => getTodayInputRange());
   const [customRange, setCustomRange] = useState<TimeRange>(() => getTodayInputRange());
   const { dashboardMode, saveMessage, saveConfig } = useDashboardConfig();
-  const { runs, mode, message, loading, reload } = useTimerRuns(mapping);
+  const { schema, loading: schemaLoading, message: schemaMessage } = useBaseSchema(
+    sourceConfig,
+    legacyMapping,
+    setSourceConfig
+  );
+  const { runs, mode, message, loading, reload } = useTimerRuns(sourceConfig);
+  const taskFieldOptions = fieldOptionsForRole(schema.fields, "taskName");
+  const dateFieldOptions = fieldOptionsForRole(schema.fields, "startTime");
+  const durationFieldOptions = fieldOptionsForRole(schema.fields, "durationSeconds");
   const allTaskNames = Array.from(new Set(runs.map((run) => run.taskName)));
   const dataMin = runs.length ? Math.min(...runs.map((run) => parseTime(run.start))) : undefined;
   const dataMax = runs.length ? Math.max(...runs.map((run) => parseTime(run.end))) : undefined;
@@ -611,8 +828,16 @@ function App() {
 
   useEffect(() => {
     const onConfig = (event: Event) => {
-      const detail = (event as CustomEvent<Partial<FieldMapping>>).detail;
-      setMapping((current) => ({ ...current, ...detail }));
+      const detail = (event as CustomEvent<{
+        sourceConfig?: Partial<DataSourceConfig>;
+        fieldMapping?: Partial<LegacyFieldMapping>;
+      }>).detail;
+      if (detail.sourceConfig) {
+        setSourceConfig((current) => ({ ...current, ...detail.sourceConfig }));
+      }
+      if (detail.fieldMapping) {
+        setLegacyMapping((current) => ({ ...current, ...detail.fieldMapping }));
+      }
     };
     window.addEventListener("timer-plugin-config", onConfig);
     return () => window.removeEventListener("timer-plugin-config", onConfig);
@@ -641,6 +866,17 @@ function App() {
     if (isValidTimeRange(customRangeDraft)) {
       setCustomRange(customRangeDraft);
     }
+  };
+
+  const updateSourceConfig = (patch: Partial<DataSourceConfig>) => {
+    setSourceConfig((current) => ({ ...current, ...patch }));
+  };
+
+  const updateTable = (tableId: string) => {
+    setSourceConfig({
+      ...emptySourceConfig,
+      tableId
+    });
   };
 
   const openRecordDetail = useCallback(async (run: TimerRun) => {
@@ -812,19 +1048,94 @@ function App() {
 
       {dashboardMode === "edit" && <aside className="config-pane">
         <div className="config-head">
-          <h2>字段配置</h2>
-          <p>保持字段名与多维表格一致</p>
+          <h2>数据配置</h2>
+          <p>选择当前多维表格里的数据表、视图和字段</p>
         </div>
-        {Object.entries(mapping).map(([key, value]) => (
-          <label key={key}>
-            <span>{fieldLabel(key as keyof FieldMapping)}</span>
-            <input
-              value={value}
-              onChange={(event) => setMapping((current) => ({ ...current, [key]: event.target.value }))}
-            />
-          </label>
-        ))}
-        <button className="save-button" onClick={() => void saveConfig(mapping)} type="button">
+        <label>
+          <span>数据表</span>
+          <select
+            disabled={!schema.tables.length}
+            value={sourceConfig.tableId}
+            onChange={(event) => updateTable(event.target.value)}
+          >
+            {!schema.tables.length && <option value="">暂无可选数据表</option>}
+            {schema.tables.map((table) => (
+              <option key={table.id} value={table.id}>{table.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>视图</span>
+          <select
+            disabled={!schema.views.length}
+            value={sourceConfig.viewId}
+            onChange={(event) => updateSourceConfig({ viewId: event.target.value })}
+          >
+            {!schema.views.length && <option value="">全部记录</option>}
+            {schema.views.map((view) => (
+              <option key={view.id} value={view.id}>{view.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>任务名称字段</span>
+          <select
+            disabled={!taskFieldOptions.length}
+            value={sourceConfig.taskNameFieldId}
+            onChange={(event) => updateSourceConfig({ taskNameFieldId: event.target.value })}
+          >
+            {!taskFieldOptions.length && <option value="">未找到文本/单选字段</option>}
+            {taskFieldOptions.map((field) => (
+              <option key={field.id} value={field.id}>{field.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>开始时间字段</span>
+          <select
+            disabled={!dateFieldOptions.length}
+            value={sourceConfig.startTimeFieldId}
+            onChange={(event) => updateSourceConfig({ startTimeFieldId: event.target.value })}
+          >
+            {!dateFieldOptions.length && <option value="">未找到日期时间字段</option>}
+            {dateFieldOptions.map((field) => (
+              <option key={field.id} value={field.id}>{field.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>结束时间字段</span>
+          <select
+            disabled={!dateFieldOptions.length}
+            value={sourceConfig.endTimeFieldId}
+            onChange={(event) => updateSourceConfig({ endTimeFieldId: event.target.value })}
+          >
+            {!dateFieldOptions.length && <option value="">未找到日期时间字段</option>}
+            {dateFieldOptions.map((field) => (
+              <option key={field.id} value={field.id}>{field.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>耗时字段</span>
+          <select
+            value={sourceConfig.durationSecondsFieldId}
+            onChange={(event) => updateSourceConfig({ durationSecondsFieldId: event.target.value })}
+          >
+            <option value="">按开始/结束时间计算</option>
+            {durationFieldOptions.map((field) => (
+              <option key={field.id} value={field.id}>{field.name}</option>
+            ))}
+          </select>
+        </label>
+        {schemaMessage && <p className="save-message error">{schemaMessage}</p>}
+        {schemaLoading && <p className="save-message">正在读取字段...</p>}
+        <button
+          className="save-button"
+          disabled={!isSourceConfigReady(sourceConfig)}
+          onClick={() => void saveConfig(sourceConfig)}
+          type="button"
+        >
           <Check size={16} />
           保存到仪表盘
         </button>
@@ -836,17 +1147,6 @@ function App() {
       </aside>}
     </main>
   );
-}
-
-function fieldLabel(field: keyof FieldMapping): string {
-  const labels: Record<keyof FieldMapping, string> = {
-    tableName: "数据表",
-    taskName: "任务名称字段",
-    startTime: "开始时间字段",
-    endTime: "结束时间字段",
-    durationSeconds: "耗时字段"
-  };
-  return labels[field];
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

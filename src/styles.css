@@ -18,7 +18,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -345,7 +346,8 @@ h2 {
   font-weight: 650;
 }
 
-.config-pane input {
+.config-pane input,
+.config-pane select {
   height: 38px;
   min-width: 0;
   border: 1px solid #d5dfec;
@@ -356,9 +358,15 @@ h2 {
   outline: none;
 }
 
-.config-pane input:focus {
+.config-pane input:focus,
+.config-pane select:focus {
   border-color: #58b7a4;
   box-shadow: 0 0 0 2px rgba(88, 183, 164, 0.16);
+}
+
+.config-pane select:disabled {
+  color: #8f99aa;
+  background: rgba(244, 247, 251, 0.86);
 }
 
 .save-button {
@@ -380,10 +388,20 @@ h2 {
   background: linear-gradient(135deg, #f7835f, #e96548);
 }
 
+.save-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+  box-shadow: none;
+}
+
 .save-message {
   color: #33735b;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.save-message.error {
+  color: #c44d3a;
 }
 
 .config-note {
