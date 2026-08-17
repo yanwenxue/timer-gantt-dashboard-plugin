@@ -27,7 +27,7 @@ select {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   height: 100%;
-  min-height: 540px;
+  min-height: 0;
   overflow: hidden;
   background:
     radial-gradient(circle at 16% 0%, rgba(88, 183, 164, 0.16), transparent 28%),
@@ -42,17 +42,22 @@ select {
 .visual-pane {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
+  overflow: auto;
   padding: 22px 24px 24px;
   background: transparent;
 }
 
 .config-pane {
   display: flex;
+  min-height: 0;
   flex-direction: column;
   gap: 15px;
   border-left: 1px solid rgba(202, 213, 228, 0.76);
-  padding: 22px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 22px 22px 34px;
   background: rgba(255, 255, 255, 0.78);
   box-shadow: -18px 0 38px rgba(36, 54, 79, 0.08);
   backdrop-filter: blur(18px);
@@ -406,6 +411,9 @@ h2 {
 
 .save-button {
   display: inline-flex;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   min-height: 42px;
   align-items: center;
   justify-content: center;
