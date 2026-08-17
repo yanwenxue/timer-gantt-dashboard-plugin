@@ -8,6 +8,7 @@ import "./styles.css";
 type TimerRun = {
   id: string;
   tableId?: string;
+  viewId?: string;
   taskName: string;
   start: string;
   end: string;
@@ -221,6 +222,10 @@ async function loadLarkRuns(mapping: FieldMapping): Promise<TimerRun[]> {
   const endField = await table.getField<IField>(mapping.endTime);
   const durationField = await table.getField<IField>(mapping.durationSeconds);
   const recordList = await table.getRecordList();
+  const activeView = await table
+    .getActiveView()
+    .catch(async () => (await table.getViewList())[0])
+    .catch(() => undefined);
   const rows: TimerRun[] = [];
 
   for (const record of recordList) {
@@ -237,6 +242,7 @@ async function loadLarkRuns(mapping: FieldMapping): Promise<TimerRun[]> {
     rows.push({
       id: record.id ?? `${taskName}-${start}`,
       tableId: table.id,
+      viewId: activeView?.id,
       taskName,
       start,
       end,
@@ -545,7 +551,11 @@ function TimelineChart({
               });
             }
 
-            return { type: "group", children };
+            return {
+              type: "group",
+              cursor: item.tableId ? "pointer" : "default",
+              children
+            };
           }
         }
       ]
@@ -640,17 +650,39 @@ function App() {
       }
 
       const { ui } = await import("@lark-base-open/js-sdk");
-      await ui.showRecordDetailDialog({
+      const opened = await ui.showRecordDetailDialog({
         tableId: run.tableId,
         recordId: run.id
       });
+      if (!opened) {
+        throw new Error("打开行详情失败");
+      }
     } catch (error) {
       console.warn(error);
       try {
-        const { ui, ToastType } = await import("@lark-base-open/js-sdk");
+        if (!run.tableId) {
+          throw error;
+        }
+
+        const { base, bridge, ui, ToastType } = await import("@lark-base-open/js-sdk");
+        const viewId = run.viewId ?? await base
+          .getTableById(run.tableId)
+          .then((table) => table.getViewList())
+          .then((views) => views[0]?.id);
+        if (!viewId) {
+          throw error;
+        }
+
+        const url = await bridge.getBitableUrl({
+          tableId: run.tableId,
+          viewId,
+          recordId: run.id,
+          fieldId: null
+        });
+        window.open(url, "_blank", "noopener,noreferrer");
         await ui.showToast({
-          toastType: ToastType.warning,
-          message: "当前无法打开行详情，请确认在飞书仪表盘环境中使用"
+          toastType: ToastType.info,
+          message: "已打开对应行链接"
         });
       } catch {
         window.alert("当前无法打开行详情，请确认在飞书仪表盘环境中使用");
