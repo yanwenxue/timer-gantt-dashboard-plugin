@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import * as echarts from "echarts";
-import { CalendarClock, Check, Clock3, ListTree, RefreshCw, TimerReset } from "lucide-react";
+import { CalendarClock, Check, ChevronDown, Clock3, ListTree, RefreshCw, TimerReset } from "lucide-react";
 import type { IField, IFieldMeta, ITable } from "@lark-base-open/js-sdk";
 import "./styles.css";
 
@@ -46,6 +46,12 @@ type FieldOption = {
   id: string;
   name: string;
   type: number;
+};
+
+type SelectOption = {
+  id: string;
+  name: string;
+  meta?: string;
 };
 
 type BaseSchema = {
@@ -263,6 +269,29 @@ function fieldMatchesRole(field: FieldOption, role: FieldRole): boolean {
 
 function fieldOptionsForRole(fields: FieldOption[], role: FieldRole): FieldOption[] {
   return fields.filter((field) => fieldMatchesRole(field, role));
+}
+
+function fieldTypeLabel(type: number): string {
+  const labels: Record<number, string> = {
+    1: "文本",
+    2: "数字",
+    3: "单选",
+    5: "日期时间",
+    20: "公式",
+    1001: "创建时间",
+    1002: "更新时间",
+    1005: "自动编号"
+  };
+
+  return labels[type] ?? `类型 ${type}`;
+}
+
+function toFieldSelectOptions(fields: FieldOption[]): SelectOption[] {
+  return fields.map((field) => ({
+    id: field.id,
+    name: field.name,
+    meta: fieldTypeLabel(field.type)
+  }));
 }
 
 function findFieldByName(fields: FieldOption[], name: string, role: FieldRole): string {
@@ -787,6 +816,45 @@ function TimelineChart({
   return <div className="chart" ref={chartRef} />;
 }
 
+function ConfigSelect({
+  label,
+  value,
+  disabled = false,
+  options,
+  emptyLabel,
+  onChange
+}: {
+  label: string;
+  value: string;
+  disabled?: boolean;
+  options: SelectOption[];
+  emptyLabel?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label>
+      <span>{label}</span>
+      <div className="select-wrap">
+        <select
+          aria-label={label}
+          disabled={disabled}
+          title={label}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          {emptyLabel && <option value="">{emptyLabel}</option>}
+          {options.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.meta ? `${option.name} - ${option.meta}` : option.name}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="select-chevron" size={16} />
+      </div>
+    </label>
+  );
+}
+
 function App() {
   const [sourceConfig, setSourceConfig] = useState<DataSourceConfig>(emptySourceConfig);
   const [legacyMapping, setLegacyMapping] = useState<LegacyFieldMapping>(defaultLegacyMapping);
@@ -804,6 +872,9 @@ function App() {
   const taskFieldOptions = fieldOptionsForRole(schema.fields, "taskName");
   const dateFieldOptions = fieldOptionsForRole(schema.fields, "startTime");
   const durationFieldOptions = fieldOptionsForRole(schema.fields, "durationSeconds");
+  const taskSelectOptions = toFieldSelectOptions(taskFieldOptions);
+  const dateSelectOptions = toFieldSelectOptions(dateFieldOptions);
+  const durationSelectOptions = toFieldSelectOptions(durationFieldOptions);
   const allTaskNames = Array.from(new Set(runs.map((run) => run.taskName)));
   const dataMin = runs.length ? Math.min(...runs.map((run) => parseTime(run.start))) : undefined;
   const dataMax = runs.length ? Math.max(...runs.map((run) => parseTime(run.end))) : undefined;
@@ -1049,85 +1120,55 @@ function App() {
       {dashboardMode === "edit" && <aside className="config-pane">
         <div className="config-head">
           <h2>数据配置</h2>
-          <p>选择当前多维表格里的数据表、视图和字段</p>
+          <p>点击每项右侧箭头，下拉选择当前多维表格里的数据表、视图和字段</p>
         </div>
-        <label>
-          <span>数据表</span>
-          <select
-            disabled={!schema.tables.length}
-            value={sourceConfig.tableId}
-            onChange={(event) => updateTable(event.target.value)}
-          >
-            {!schema.tables.length && <option value="">暂无可选数据表</option>}
-            {schema.tables.map((table) => (
-              <option key={table.id} value={table.id}>{table.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>视图</span>
-          <select
-            disabled={!schema.views.length}
-            value={sourceConfig.viewId}
-            onChange={(event) => updateSourceConfig({ viewId: event.target.value })}
-          >
-            {!schema.views.length && <option value="">全部记录</option>}
-            {schema.views.map((view) => (
-              <option key={view.id} value={view.id}>{view.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>任务名称字段</span>
-          <select
-            disabled={!taskFieldOptions.length}
-            value={sourceConfig.taskNameFieldId}
-            onChange={(event) => updateSourceConfig({ taskNameFieldId: event.target.value })}
-          >
-            {!taskFieldOptions.length && <option value="">未找到文本/单选字段</option>}
-            {taskFieldOptions.map((field) => (
-              <option key={field.id} value={field.id}>{field.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>开始时间字段</span>
-          <select
-            disabled={!dateFieldOptions.length}
-            value={sourceConfig.startTimeFieldId}
-            onChange={(event) => updateSourceConfig({ startTimeFieldId: event.target.value })}
-          >
-            {!dateFieldOptions.length && <option value="">未找到日期时间字段</option>}
-            {dateFieldOptions.map((field) => (
-              <option key={field.id} value={field.id}>{field.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>结束时间字段</span>
-          <select
-            disabled={!dateFieldOptions.length}
-            value={sourceConfig.endTimeFieldId}
-            onChange={(event) => updateSourceConfig({ endTimeFieldId: event.target.value })}
-          >
-            {!dateFieldOptions.length && <option value="">未找到日期时间字段</option>}
-            {dateFieldOptions.map((field) => (
-              <option key={field.id} value={field.id}>{field.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>耗时字段</span>
-          <select
-            value={sourceConfig.durationSecondsFieldId}
-            onChange={(event) => updateSourceConfig({ durationSecondsFieldId: event.target.value })}
-          >
-            <option value="">按开始/结束时间计算</option>
-            {durationFieldOptions.map((field) => (
-              <option key={field.id} value={field.id}>{field.name}</option>
-            ))}
-          </select>
-        </label>
+        <ConfigSelect
+          disabled={!schema.tables.length}
+          emptyLabel="暂无可选数据表"
+          label="数据表"
+          options={schema.tables}
+          value={sourceConfig.tableId}
+          onChange={updateTable}
+        />
+        <ConfigSelect
+          disabled={!schema.views.length}
+          emptyLabel="全部记录"
+          label="视图"
+          options={schema.views}
+          value={sourceConfig.viewId}
+          onChange={(viewId) => updateSourceConfig({ viewId })}
+        />
+        <ConfigSelect
+          disabled={!taskSelectOptions.length}
+          emptyLabel="未找到文本/单选字段"
+          label="任务名称字段"
+          options={taskSelectOptions}
+          value={sourceConfig.taskNameFieldId}
+          onChange={(taskNameFieldId) => updateSourceConfig({ taskNameFieldId })}
+        />
+        <ConfigSelect
+          disabled={!dateSelectOptions.length}
+          emptyLabel="未找到日期时间字段"
+          label="开始时间字段"
+          options={dateSelectOptions}
+          value={sourceConfig.startTimeFieldId}
+          onChange={(startTimeFieldId) => updateSourceConfig({ startTimeFieldId })}
+        />
+        <ConfigSelect
+          disabled={!dateSelectOptions.length}
+          emptyLabel="未找到日期时间字段"
+          label="结束时间字段"
+          options={dateSelectOptions}
+          value={sourceConfig.endTimeFieldId}
+          onChange={(endTimeFieldId) => updateSourceConfig({ endTimeFieldId })}
+        />
+        <ConfigSelect
+          emptyLabel="按开始/结束时间计算"
+          label="耗时字段"
+          options={durationSelectOptions}
+          value={sourceConfig.durationSecondsFieldId}
+          onChange={(durationSecondsFieldId) => updateSourceConfig({ durationSecondsFieldId })}
+        />
         {schemaMessage && <p className="save-message error">{schemaMessage}</p>}
         {schemaLoading && <p className="save-message">正在读取字段...</p>}
         <button

@@ -349,13 +349,43 @@ h2 {
 .config-pane input,
 .config-pane select {
   height: 38px;
+  width: 100%;
   min-width: 0;
   border: 1px solid #d5dfec;
   border-radius: 9px;
-  padding: 0 11px;
+  padding: 0 38px 0 11px;
   color: #172033;
   background: rgba(255, 255, 255, 0.86);
   outline: none;
+}
+
+.config-pane select {
+  appearance: none;
+  cursor: pointer;
+}
+
+.select-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.select-chevron {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  color: #66758c;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.select-wrap:hover select:not(:disabled) {
+  border-color: #84cfc2;
+  background: #ffffff;
+}
+
+.select-wrap:hover .select-chevron {
+  color: #2f8f7d;
 }
 
 .config-pane input:focus,
@@ -367,6 +397,11 @@ h2 {
 .config-pane select:disabled {
   color: #8f99aa;
   background: rgba(244, 247, 251, 0.86);
+  cursor: not-allowed;
+}
+
+.config-pane select:disabled + .select-chevron {
+  color: #a8b1bf;
 }
 
 .save-button {
