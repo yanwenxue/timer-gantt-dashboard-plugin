@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import * as echarts from "echarts";
 import { CalendarClock, Check, Clock3, ListTree, RefreshCw, TimerReset } from "lucide-react";
@@ -7,6 +7,7 @@ import "./styles.css";
 
 type TimerRun = {
   id: string;
+  tableId?: string;
   taskName: string;
   start: string;
   end: string;
@@ -235,6 +236,7 @@ async function loadLarkRuns(mapping: FieldMapping): Promise<TimerRun[]> {
 
     rows.push({
       id: record.id ?? `${taskName}-${start}`,
+      tableId: table.id,
       taskName,
       start,
       end,
@@ -325,11 +327,13 @@ function useDashboardConfig() {
 function TimelineChart({
   runs,
   timeWindow,
-  customRange
+  customRange,
+  onOpenRecord
 }: {
   runs: TimerRun[];
   timeWindow: TimeWindow;
   customRange: TimeRange;
+  onOpenRecord?: (run: TimerRun) => void;
 }) {
   const chartRef = useRef<HTMLDivElement | null>(null);
   const sortedRuns = useMemo(() => [...runs].sort(byStartTime), [runs]);
@@ -424,8 +428,9 @@ function TimelineChart({
             `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;"></span><strong>${item.taskName}</strong>`,
             `开始：${item.start}`,
             `结束：${item.end}`,
-            `耗时：${formatDuration(item.durationSeconds)}`
-          ].join("<br/>");
+            `耗时：${formatDuration(item.durationSeconds)}`,
+            item.tableId ? "点击打开行详情" : ""
+          ].filter(Boolean).join("<br/>");
         }
       },
       dataZoom: [
@@ -546,13 +551,20 @@ function TimelineChart({
       ]
     });
 
+    chart.on("click", (params: any) => {
+      const run = params?.value?.[3] as TimerRun | undefined;
+      if (run) {
+        onOpenRecord?.(run);
+      }
+    });
+
     const resize = () => chart.resize();
     window.addEventListener("resize", resize);
     return () => {
       window.removeEventListener("resize", resize);
       chart.dispose();
     };
-  }, [sortedRuns, tasks, timeWindow, customRange, windowStart, windowEnd]);
+  }, [sortedRuns, tasks, timeWindow, customRange, windowStart, windowEnd, onOpenRecord]);
 
   return <div className="chart" ref={chartRef} />;
 }
@@ -620,6 +632,31 @@ function App() {
       setCustomRange(customRangeDraft);
     }
   };
+
+  const openRecordDetail = useCallback(async (run: TimerRun) => {
+    try {
+      if (!run.tableId) {
+        throw new Error("示例数据没有对应的多维表格行");
+      }
+
+      const { ui } = await import("@lark-base-open/js-sdk");
+      await ui.showRecordDetailDialog({
+        tableId: run.tableId,
+        recordId: run.id
+      });
+    } catch (error) {
+      console.warn(error);
+      try {
+        const { ui, ToastType } = await import("@lark-base-open/js-sdk");
+        await ui.showToast({
+          toastType: ToastType.warning,
+          message: "当前无法打开行详情，请确认在飞书仪表盘环境中使用"
+        });
+      } catch {
+        window.alert("当前无法打开行详情，请确认在飞书仪表盘环境中使用");
+      }
+    }
+  }, []);
 
   return (
     <main className={dashboardMode === "view" ? "plugin-shell view-only" : "plugin-shell"}>
@@ -733,7 +770,12 @@ function App() {
           </div>
         </div>
 
-        <TimelineChart runs={visibleRuns} timeWindow={timeWindow} customRange={customRange} />
+        <TimelineChart
+          runs={visibleRuns}
+          timeWindow={timeWindow}
+          customRange={customRange}
+          onOpenRecord={openRecordDetail}
+        />
       </section>
 
       {dashboardMode === "edit" && <aside className="config-pane">
