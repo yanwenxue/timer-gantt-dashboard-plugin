@@ -5,6 +5,7 @@ import { CalendarClock, Check, ChevronDown, Clock3, ListTree, RefreshCw, TimerRe
 import type { IField, IFieldMeta, ITable } from "@lark-base-open/js-sdk";
 import "./styles.css";
 import { createTheme, defaultThemeColor, isThemeColor, themePresets, type PanelTheme } from "./theme";
+import { applyDashboardTheme, loadThemePreference, selectThemeColor, type ThemePreference } from "./theme-preference";
 
 type TimerRun = {
   id: string;
@@ -491,11 +492,12 @@ function useDashboardConfig() {
           dashboard.state === DashboardState.View || dashboard.state === DashboardState.FullScreen ? "view" : "edit"
         );
         const config = await dashboard.getConfig();
+        if (!active) return;
         window.dispatchEvent(new CustomEvent("timer-plugin-config", {
           detail: {
             sourceConfig: config.customConfig?.sourceConfig,
             fieldMapping: config.customConfig?.fieldMapping,
-            themeColor: config.customConfig?.themeColor ?? defaultThemeColor
+            themeColor: config.customConfig?.themeColor
           }
         }));
         await dashboard.setRendered();
@@ -943,10 +945,11 @@ function ConfigSelect({
   );
 }
 
-function ThemePicker({ color, onChange, dashboardMode }: {
+function ThemePicker({ color, onChange, dashboardMode, persistence }: {
   color: string;
   onChange: (color: string) => void;
   dashboardMode: DashboardMode;
+  persistence: ThemePreference["persistence"];
 }) {
   const [draft, setDraft] = useState(color);
   useEffect(() => setDraft(color), [color]);
@@ -981,31 +984,22 @@ function ThemePicker({ color, onChange, dashboardMode }: {
         </div>
         {!valid && <p className="theme-color-error">请输入 # 加 6 位十六进制色值</p>}
         <div className="theme-picker-footer">
-          <span>{dashboardMode === "edit" ? "飞书中请点击保存配置" : "已记住本机选择"}</span>
+          <span>{persistence === "saved" ? "已记住本机选择" : persistence === "unavailable" ? "当前环境无法保存，仅本次有效" : "选择后自动保存在本机"}</span>
           <button type="button" onClick={() => { setDraft(defaultThemeColor); onChange(defaultThemeColor); }}>恢复默认</button>
         </div>
+        {dashboardMode === "edit" && <p>共享主题请点击“保存配置”；本机选择优先。</p>}
       </div>
     </details>
   );
 }
 
 function App() {
-  const [themeColor, setThemeColor] = useState(() => {
-    try {
-      const saved = localStorage.getItem("timer-gantt-theme-color");
-      return isThemeColor(saved) ? saved : defaultThemeColor;
-    } catch {
-      return defaultThemeColor;
-    }
-  });
+  const [themePreference, setThemePreference] = useState(loadThemePreference);
+  const themeColor = themePreference.color;
+  const setThemeColor = useCallback((color: string) => {
+    setThemePreference(selectThemeColor(color));
+  }, []);
   const theme = useMemo(() => createTheme(themeColor), [themeColor]);
-  useEffect(() => {
-    try {
-      localStorage.setItem("timer-gantt-theme-color", themeColor);
-    } catch {
-      // Embedded browsers may disable storage; theme selection still works for this visit.
-    }
-  }, [themeColor]);
   const [sourceConfig, setSourceConfig] = useState<DataSourceConfig>(emptySourceConfig);
   const [legacyMapping, setLegacyMapping] = useState<LegacyFieldMapping>(defaultLegacyMapping);
   const [hiddenTasks, setHiddenTasks] = useState<Set<string>>(() => new Set());
@@ -1054,9 +1048,7 @@ function App() {
         fieldMapping?: Partial<LegacyFieldMapping>;
         themeColor?: string;
       }>).detail;
-      if (isThemeColor(detail.themeColor)) {
-        setThemeColor(detail.themeColor);
-      }
+      setThemePreference((current) => applyDashboardTheme(current, detail.themeColor));
       if (detail.sourceConfig) {
         setSourceConfig((current) => ({ ...current, ...detail.sourceConfig }));
       }
@@ -1161,7 +1153,7 @@ function App() {
             {message && <p>{message}</p>}
           </div>
           <div className="topbar-actions">
-            <ThemePicker color={themeColor} onChange={setThemeColor} dashboardMode={dashboardMode} />
+            <ThemePicker color={themeColor} onChange={setThemeColor} dashboardMode={dashboardMode} persistence={themePreference.persistence} />
             <button className="icon-button" onClick={() => void reload()} title="刷新数据" type="button">
               <RefreshCw size={17} className={loading ? "spin" : ""} />
             </button>
