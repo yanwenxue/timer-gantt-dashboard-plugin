@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import * as echarts from "echarts";
-import { CalendarClock, Check, ChevronDown, Clock3, ListTree, RefreshCw, TimerReset } from "lucide-react";
+import { CalendarClock, Check, ChevronDown, Clock3, ListTree, RefreshCw, TimerReset, Palette } from "lucide-react";
 import type { IField, IFieldMeta, ITable } from "@lark-base-open/js-sdk";
 import "./styles.css";
+import { createTheme, defaultThemeColor, isThemeColor, themePresets, type PanelTheme } from "./theme";
 
 type TimerRun = {
   id: string;
@@ -106,7 +107,6 @@ const mockRuns: TimerRun[] = [
   }
 ];
 
-const palette = ["#58b7a4", "#ff8a65", "#6ea8fe", "#f2c94c", "#b388ff", "#ef6f8a"];
 const hourMs = 60 * 60 * 1000;
 const dayMs = 24 * hourMs;
 const axisPaddingMs = 30 * 60 * 1000;
@@ -162,9 +162,9 @@ function formatDuration(seconds: number): string {
   return [h ? `${h} 小时` : "", m ? `${m} 分` : "", s ? `${s} 秒` : ""].filter(Boolean).join(" ");
 }
 
-function taskColor(taskName: string, tasks: string[]): string {
+function taskColor(taskName: string, tasks: string[], theme: PanelTheme): string {
   const index = Math.max(0, tasks.indexOf(taskName));
-  return palette[index % palette.length];
+  return theme.palette[index % theme.palette.length];
 }
 
 function dateRangeLabel(runs: TimerRun[]): string {
@@ -494,7 +494,8 @@ function useDashboardConfig() {
         window.dispatchEvent(new CustomEvent("timer-plugin-config", {
           detail: {
             sourceConfig: config.customConfig?.sourceConfig,
-            fieldMapping: config.customConfig?.fieldMapping
+            fieldMapping: config.customConfig?.fieldMapping,
+            themeColor: config.customConfig?.themeColor ?? defaultThemeColor
           }
         }));
         await dashboard.setRendered();
@@ -508,12 +509,12 @@ function useDashboardConfig() {
     };
   }, []);
 
-  const saveConfig = async (config: DataSourceConfig) => {
+  const saveConfig = async (config: DataSourceConfig, themeColor: string) => {
     try {
       const { dashboard, ui, ToastType } = await import("@lark-base-open/js-sdk");
       await dashboard.saveConfig({
         dataConditions: [],
-        customConfig: { sourceConfig: config }
+        customConfig: { sourceConfig: config, themeColor }
       });
       await dashboard.setRendered();
       setSaveMessage("已保存，可回到仪表盘查看");
@@ -569,16 +570,27 @@ function useBaseSchema(
 
 function TimelineChart({
   runs,
+  theme,
+  colorTasks,
   timeWindow,
   customRange,
   onOpenRecord
 }: {
   runs: TimerRun[];
+  theme: PanelTheme;
+  colorTasks: string[];
   timeWindow: TimeWindow;
   customRange: TimeRange;
   onOpenRecord?: (run: TimerRun) => void;
 }) {
   const chartRef = useRef<HTMLDivElement | null>(null);
+  const [hover, setHover] = useState<{
+    x: number;
+    time: number;
+    bottom: number;
+    panelLeft: number;
+    matches: Array<{ taskName: string; count: number; y: number }>;
+  } | null>(null);
   const sortedRuns = useMemo(() => [...runs].sort(byStartTime), [runs]);
   const tasks = useMemo(() => Array.from(new Set(sortedRuns.map((run) => run.taskName))), [sortedRuns]);
   const [windowStart, windowEnd] = useMemo(
@@ -588,7 +600,64 @@ function TimelineChart({
 
   useEffect(() => {
     if (!chartRef.current) return;
-    const chart = echarts.init(chartRef.current);
+    const container = chartRef.current;
+    const chart = echarts.init(container);
+    setHover(null);
+    const intervals = sortedRuns.map((run) => ({
+      run,
+      start: parseTime(run.start),
+      end: parseTime(run.end)
+    }));
+    const clearHover = () => setHover(null);
+    const trackHover = (event: PointerEvent) => {
+      if (event.pointerType === "touch") return;
+      const bounds = container.getBoundingClientRect();
+      const x = (event.clientX - bounds.left) * chart.getWidth() / bounds.width;
+      const y = (event.clientY - bounds.top) * chart.getHeight() / bounds.height;
+      const bottom = chart.getHeight() - 70;
+      // Include the axis labels, but leave the zoom slider to its own interaction.
+      if (x < 198 || x > chart.getWidth() - 26 || y < 28 || y >= bottom + 24) {
+        clearHover();
+        return;
+      }
+      const time = Number(chart.convertFromPixel({ xAxisIndex: 0 }, x));
+      if (!Number.isFinite(time)) {
+        clearHover();
+        return;
+      }
+      const counts = new Map<string, number>();
+      for (const { run, start, end } of intervals) {
+        if (start <= time && time <= end) {
+          counts.set(run.taskName, (counts.get(run.taskName) ?? 0) + 1);
+        }
+      }
+      setHover({
+        x,
+        time,
+        bottom,
+        panelLeft: Math.max(8, Math.min(x + 14, chart.getWidth() - 288)),
+        matches: tasks.flatMap((taskName, index) => counts.has(taskName) ? [{
+          taskName,
+          count: counts.get(taskName)!,
+          y: Number(chart.convertToPixel({ yAxisIndex: 0 }, index))
+        }] : [])
+      });
+    };
+    container.addEventListener("pointermove", trackHover);
+    container.addEventListener("pointerleave", clearHover);
+    chart.on("datazoom", clearHover);
+    const resize = () => {
+      clearHover();
+      chart.resize();
+    };
+    window.addEventListener("resize", resize);
+    const cleanup = () => {
+      container.removeEventListener("pointermove", trackHover);
+      container.removeEventListener("pointerleave", clearHover);
+      window.removeEventListener("resize", resize);
+      chart.off("datazoom", clearHover);
+      chart.dispose();
+    };
     if (!sortedRuns.length || !tasks.length) {
       chart.setOption({
         animation: false,
@@ -621,9 +690,9 @@ function TimelineChart({
             height: 22,
             bottom: 24,
             borderColor: "#dbe5f2",
-            fillerColor: "rgba(88, 183, 164, 0.2)",
-            backgroundColor: "#edf7f4",
-            handleStyle: { color: "#58b7a4" },
+            fillerColor: theme.rgba(0.2),
+            backgroundColor: theme.soft,
+            handleStyle: { color: theme.color },
             textStyle: { color: "#646a73" },
             labelFormatter: (value: number) => formatTime(value)
           }
@@ -644,12 +713,7 @@ function TimelineChart({
         yAxis: { show: false },
         series: []
       });
-      const resize = () => chart.resize();
-      window.addEventListener("resize", resize);
-      return () => {
-        window.removeEventListener("resize", resize);
-        chart.dispose();
-      };
+      return cleanup;
     }
 
     const values = sortedRuns.map((run) => [parseTime(run.start), parseTime(run.end), tasks.indexOf(run.taskName), run]);
@@ -666,7 +730,7 @@ function TimelineChart({
         confine: true,
         formatter: (params: { value: [number, number, number, TimerRun] }) => {
           const item = params.value[3];
-          const color = taskColor(item.taskName, tasks);
+          const color = taskColor(item.taskName, colorTasks, theme);
           return [
             `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;"></span><strong>${item.taskName}</strong>`,
             `开始：${item.start}`,
@@ -693,9 +757,9 @@ function TimelineChart({
           height: 22,
           bottom: 24,
           borderColor: "#dbe5f2",
-          fillerColor: "rgba(88, 183, 164, 0.2)",
-          backgroundColor: "#edf7f4",
-          handleStyle: { color: "#58b7a4" },
+          fillerColor: theme.rgba(0.2),
+          backgroundColor: theme.soft,
+          handleStyle: { color: theme.color },
           textStyle: { color: "#646a73" },
           labelFormatter: (value: number) => formatTime(value),
           filterMode: "weakFilter"
@@ -733,7 +797,7 @@ function TimelineChart({
           encode: { x: [0, 1], y: 2 },
           data: values,
           renderItem: (params: any, api: any) => {
-            const item = api.value(3) as TimerRun;
+            const item = sortedRuns[params.dataIndex];
             const start = api.coord([api.value(0), api.value(2)]);
             const end = api.coord([api.value(1), api.value(2)]);
             const height = Math.max(12, api.size([0, 1])[1] * 0.46);
@@ -753,17 +817,17 @@ function TimelineChart({
               }
             );
             if (!rect) return null;
-            const fill = taskColor(item.taskName, tasks);
+            const fill = taskColor(item.taskName, colorTasks, theme);
             const children: any[] = [
               {
                 type: "rect",
                 shape: { ...rect, r: 4 },
-                style: api.style({
+                style: {
                   fill,
                   shadowColor: "rgba(31, 35, 41, 0.13)",
                   shadowBlur: 10,
                   shadowOffsetY: 4
-                })
+                }
               }
             ];
 
@@ -805,15 +869,39 @@ function TimelineChart({
       }
     });
 
-    const resize = () => chart.resize();
-    window.addEventListener("resize", resize);
-    return () => {
-      window.removeEventListener("resize", resize);
-      chart.dispose();
-    };
-  }, [sortedRuns, tasks, timeWindow, customRange, windowStart, windowEnd, onOpenRecord]);
+    return cleanup;
+  }, [sortedRuns, tasks, theme, colorTasks, timeWindow, customRange, windowStart, windowEnd, onOpenRecord]);
 
-  return <div className="chart" ref={chartRef} />;
+  return (
+    <div className="chart">
+      <div className="chart-canvas" ref={chartRef} />
+      {hover && <div className="timeline-hover" aria-hidden="true">
+        <div className="timeline-hover-line" style={{ left: hover.x, top: 28, height: hover.bottom - 28 }} />
+        {hover.matches.map((match) => <span
+          key={match.taskName}
+          className="timeline-hover-dot"
+          style={{ left: hover.x, top: match.y, background: taskColor(match.taskName, colorTasks, theme) }}
+        />)}
+        <div className="timeline-hover-time" style={{ left: hover.x, top: hover.bottom + 2 }}>
+          {formatTime(hover.time)}
+        </div>
+        <div className="timeline-hover-card" style={{ left: hover.panelLeft, top: 32 }}>
+          <strong>{formatTime(hover.time)}</strong>
+          <div className="timeline-hover-summary">
+            {hover.matches.length
+              ? `${hover.matches.length} 个任务 · ${hover.matches.reduce((sum, match) => sum + match.count, 0)} 次执行`
+              : "此刻无任务执行"}
+          </div>
+          {hover.matches.slice(0, 5).map((match) => <div className="timeline-hover-task" key={match.taskName}>
+            <i style={{ background: taskColor(match.taskName, colorTasks, theme) }} />
+            <span>{match.taskName}</span>
+            {match.count > 1 && <b>×{match.count}</b>}
+          </div>)}
+          {hover.matches.length > 5 && <div className="timeline-hover-summary">另有 {hover.matches.length - 5} 个任务，见竖线交点</div>}
+        </div>
+      </div>}
+    </div>
+  );
 }
 
 function ConfigSelect({
@@ -855,7 +943,69 @@ function ConfigSelect({
   );
 }
 
+function ThemePicker({ color, onChange, dashboardMode }: {
+  color: string;
+  onChange: (color: string) => void;
+  dashboardMode: DashboardMode;
+}) {
+  const [draft, setDraft] = useState(color);
+  useEffect(() => setDraft(color), [color]);
+  const valid = isThemeColor(draft);
+  return (
+    <details className="theme-picker" onKeyDown={(event) => {
+      if (event.key === "Escape") event.currentTarget.open = false;
+    }}>
+      <summary title="调整整体面板颜色"><Palette size={17} /><span>主题色</span></summary>
+      <div className="theme-picker-panel">
+        <strong>面板主题色</strong>
+        <p>选择颜色，即时预览整体效果</p>
+        <div className="theme-presets" role="group" aria-label="预设主题色">
+          {themePresets.map((preset) => <button
+            key={preset.color}
+            type="button"
+            aria-label={preset.name}
+            aria-pressed={color.toLowerCase() === preset.color}
+            title={preset.name}
+            style={{ background: preset.color }}
+            onClick={() => onChange(preset.color)}
+          >{color.toLowerCase() === preset.color && <Check size={16} />}</button>)}
+        </div>
+        <label className="theme-custom-label" htmlFor="theme-color-input">自定义颜色</label>
+        <div className="theme-custom-inputs">
+          <input id="theme-color-input" aria-label="打开自定义选色器" type="color" value={color} onChange={(event) => onChange(event.target.value)} />
+          <input aria-label="HEX 颜色值" aria-invalid={!valid} type="text" value={draft} spellCheck={false} maxLength={7} onChange={(event) => {
+            const value = event.target.value;
+            setDraft(value);
+            if (isThemeColor(value)) onChange(value.toLowerCase());
+          }} />
+        </div>
+        {!valid && <p className="theme-color-error">请输入 # 加 6 位十六进制色值</p>}
+        <div className="theme-picker-footer">
+          <span>{dashboardMode === "edit" ? "飞书中请点击保存配置" : "已记住本机选择"}</span>
+          <button type="button" onClick={() => { setDraft(defaultThemeColor); onChange(defaultThemeColor); }}>恢复默认</button>
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function App() {
+  const [themeColor, setThemeColor] = useState(() => {
+    try {
+      const saved = localStorage.getItem("timer-gantt-theme-color");
+      return isThemeColor(saved) ? saved : defaultThemeColor;
+    } catch {
+      return defaultThemeColor;
+    }
+  });
+  const theme = useMemo(() => createTheme(themeColor), [themeColor]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("timer-gantt-theme-color", themeColor);
+    } catch {
+      // Embedded browsers may disable storage; theme selection still works for this visit.
+    }
+  }, [themeColor]);
   const [sourceConfig, setSourceConfig] = useState<DataSourceConfig>(emptySourceConfig);
   const [legacyMapping, setLegacyMapping] = useState<LegacyFieldMapping>(defaultLegacyMapping);
   const [hiddenTasks, setHiddenTasks] = useState<Set<string>>(() => new Set());
@@ -902,7 +1052,11 @@ function App() {
       const detail = (event as CustomEvent<{
         sourceConfig?: Partial<DataSourceConfig>;
         fieldMapping?: Partial<LegacyFieldMapping>;
+        themeColor?: string;
       }>).detail;
+      if (isThemeColor(detail.themeColor)) {
+        setThemeColor(detail.themeColor);
+      }
       if (detail.sourceConfig) {
         setSourceConfig((current) => ({ ...current, ...detail.sourceConfig }));
       }
@@ -998,7 +1152,7 @@ function App() {
   }, []);
 
   return (
-    <main className={dashboardMode === "view" ? "plugin-shell view-only" : "plugin-shell"}>
+    <main className={dashboardMode === "view" ? "plugin-shell view-only" : "plugin-shell"} style={theme.style}>
       <section className="visual-pane">
         <header className="topbar">
           <div>
@@ -1006,9 +1160,12 @@ function App() {
             <h1>秒级甘特图</h1>
             {message && <p>{message}</p>}
           </div>
-          <button className="icon-button" onClick={() => void reload()} title="刷新数据" type="button">
-            <RefreshCw size={17} className={loading ? "spin" : ""} />
-          </button>
+          <div className="topbar-actions">
+            <ThemePicker color={themeColor} onChange={setThemeColor} dashboardMode={dashboardMode} />
+            <button className="icon-button" onClick={() => void reload()} title="刷新数据" type="button">
+              <RefreshCw size={17} className={loading ? "spin" : ""} />
+            </button>
+          </div>
         </header>
 
         <div className="metrics">
@@ -1102,7 +1259,7 @@ function App() {
                 type="button"
                 title={hiddenTasks.has(taskName) ? "点击显示该任务" : "点击隐藏该任务"}
               >
-                <i style={{ background: taskColor(taskName, taskNames) }} />
+                <i style={{ background: taskColor(taskName, taskNames, theme) }} />
                 {taskName}
               </button>
             ))}
@@ -1111,6 +1268,8 @@ function App() {
 
         <TimelineChart
           runs={visibleRuns}
+          theme={theme}
+          colorTasks={taskNames}
           timeWindow={timeWindow}
           customRange={customRange}
           onOpenRecord={openRecordDetail}
@@ -1174,7 +1333,7 @@ function App() {
         <button
           className="save-button"
           disabled={!isSourceConfigReady(sourceConfig)}
-          onClick={() => void saveConfig(sourceConfig)}
+          onClick={() => void saveConfig(sourceConfig, themeColor)}
           type="button"
         >
           <Check size={16} />
