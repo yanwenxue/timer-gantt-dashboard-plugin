@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "./echarts";
 import type { PanelTheme } from "./theme";
 import type { TimerRun, TimeWindow } from "./types";
-import { parseTime, formatTime, formatAxisLabel, formatDuration, byStartTime, axisPaddingMs } from "./time";
+import { parseTime, formatTime, formatAxisLabel, formatDuration, byStartTime, axisPaddingMs, getRunBounds } from "./time";
 import { escapeHtml, zoomForBounds, type ZoomWindow } from "./chart-state";
 
 export function taskColor(taskName: string, tasks: string[], theme: PanelTheme): string {
@@ -179,10 +179,9 @@ export function TimelineChart({
     }
 
     const values = sortedRuns.map((run) => [parseTime(run.start), parseTime(run.end), tasks.indexOf(run.taskName), run]);
-    const dataMin = Math.min(...sortedRuns.map((run) => parseTime(run.start)));
-    const dataMax = Math.max(...sortedRuns.map((run) => parseTime(run.end)));
-    const min = timeWindow === "all" ? dataMin - axisPaddingMs : windowStart;
-    const max = timeWindow === "all" ? dataMax + axisPaddingMs : windowEnd;
+    const [dataMin, dataMax] = getRunBounds(sortedRuns);
+    const min = timeWindow === "all" ? dataMin! - axisPaddingMs : windowStart;
+    const max = timeWindow === "all" ? dataMax! + axisPaddingMs : windowEnd;
 
     chart.setOption({
       animation: false,
@@ -360,4 +359,3 @@ export function TimelineChart({
     </div>
   );
 }
-

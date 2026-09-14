@@ -29,6 +29,7 @@ export function ConfigSelect({
           value={value}
           onChange={(event) => onChange(event.target.value)}
         >
+          {value && !options.some(option => option.id === value) && <option value={value} disabled>所选项不可用，请重新选择</option>}
           {emptyLabel && <option value="">{emptyLabel}</option>}
           {options.map((option) => (
             <option key={option.id} value={option.id}>
@@ -89,4 +90,3 @@ export function ThemePicker({ color, onChange, dashboardMode, persistence }: {
     </details>
   );
 }
-

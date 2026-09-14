@@ -56,6 +56,18 @@ export function byStartTime(a: TimerRun, b: TimerRun) {
   return parseTime(a.start) - parseTime(b.start);
 }
 
+/** Iterate instead of expanding records into function arguments (large tables can exceed engine limits). */
+export function getRunBounds(runs: TimerRun[]): [number | undefined, number | undefined] {
+  if (!runs.length) return [undefined, undefined];
+  let min = runs[0].start;
+  let max = runs[0].end;
+  for (const run of runs) {
+    min = Math.min(min, run.start);
+    max = Math.max(max, run.end);
+  }
+  return [min, max];
+}
+
 export function getTodayInputRange(): TimeRange {
   const [start, end] = getTimeWindowBounds("today");
   return {

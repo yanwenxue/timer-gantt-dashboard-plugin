@@ -23,6 +23,17 @@ export function isSourceConfigReady(config: DataSourceConfig): boolean {
   return Boolean(config.tableId && config.taskNameFieldId && config.startTimeFieldId && config.endTimeFieldId);
 }
 
+/** Validate against the currently loaded table before persisting a selection. */
+export function isSourceConfigValid(config: DataSourceConfig, schema: BaseSchema): boolean {
+  const hasField = (id: string, role: FieldRole) => schema.fields.some(field => field.id === id && fieldMatchesRole(field, role));
+  return schema.tables.some(table => table.id === config.tableId)
+    && (!config.viewId || schema.views.some(view => view.id === config.viewId))
+    && hasField(config.taskNameFieldId, "taskName")
+    && hasField(config.startTimeFieldId, "startTime")
+    && hasField(config.endTimeFieldId, "endTime")
+    && (!config.durationSecondsFieldId || hasField(config.durationSecondsFieldId, "durationSeconds"));
+}
+
 export function fieldMatchesRole(field: FieldOption, role: FieldRole): boolean {
   if (role === "startTime" || role === "endTime") {
     return dateLikeFieldTypes.has(field.type);
@@ -106,4 +117,3 @@ export function isSameSourceConfig(left: DataSourceConfig, right: DataSourceConf
     left.durationSecondsFieldId === right.durationSecondsFieldId
   );
 }
-

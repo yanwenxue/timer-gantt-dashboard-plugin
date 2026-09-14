@@ -3,8 +3,8 @@ import { CalendarClock, Check, Clock3, ListTree, RefreshCw, TimerReset } from "l
 import { createTheme } from "./theme";
 import { applyDashboardTheme, loadThemePreference, selectThemeColor } from "./theme-preference";
 import type { TimerRun, DataSourceConfig, LegacyFieldMapping, TimeWindow, TimeRange } from "./types";
-import { emptySourceConfig, defaultLegacyMapping, fieldOptionsForRole, toFieldSelectOptions, isSourceConfigReady, isSameSourceConfig } from "./source-config";
-import { getTodayInputRange, getTimeWindowBounds, isValidTimeRange, runOverlapsWindow, formatDuration, formatTime, timeWindowOptions, parseTime } from "./time";
+import { emptySourceConfig, defaultLegacyMapping, fieldOptionsForRole, toFieldSelectOptions, isSourceConfigValid, isSameSourceConfig } from "./source-config";
+import { getTodayInputRange, getTimeWindowBounds, isValidTimeRange, runOverlapsWindow, formatDuration, formatTime, timeWindowOptions, getRunBounds } from "./time";
 import { ConfigSelect, ThemePicker } from "./ConfigControls";
 import { TimelineChart, taskColor } from "./TimelineChart";
 import { useDashboardConfig, useBaseSchema, useTimerRuns } from "./hooks";
@@ -21,7 +21,7 @@ export function App() {
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("today");
   const [customRangeDraft, setCustomRangeDraft] = useState<TimeRange>(() => getTodayInputRange());
   const [customRange, setCustomRange] = useState<TimeRange>(() => getTodayInputRange());
-  const { dashboardMode, saveMessage, saveConfig, saved, preview, configError, saving } = useDashboardConfig();
+  const { dashboardMode, saveMessage, saveConfig, saved, preview, configError, saving, retryConfig } = useDashboardConfig();
   const [configReady, setConfigReady] = useState(false);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -38,14 +38,18 @@ export function App() {
   const resolveConfig = useCallback((expected: DataSourceConfig, resolved: DataSourceConfig) => {
     setSourceConfig(current => isSameSourceConfig(current, expected) ? resolved : current);
   }, []);
-  const { schema, loading: schemaLoading, message: schemaMessage } = useBaseSchema(
+  const { schema, loading: schemaLoading, message: schemaMessage, retrySchema } = useBaseSchema(
     sourceConfig,
     legacyMapping,
     resolveConfig,
     configReady && !preview
   );
   const { runs, mode, message, loading, reload } = useTimerRuns(sourceConfig, configReady, preview);
-  const refresh = () => { setNow(Date.now()); void reload(); };
+  const refresh = () => {
+    setNow(Date.now());
+    if (configError) retryConfig();
+    else { retrySchema(); void reload(); }
+  };
   const taskFieldOptions = fieldOptionsForRole(schema.fields, "taskName");
   const dateFieldOptions = fieldOptionsForRole(schema.fields, "startTime");
   const durationFieldOptions = fieldOptionsForRole(schema.fields, "durationSeconds");
@@ -53,8 +57,7 @@ export function App() {
   const dateSelectOptions = toFieldSelectOptions(dateFieldOptions);
   const durationSelectOptions = toFieldSelectOptions(durationFieldOptions);
   const allTaskNames = useMemo(() => Array.from(new Set(runs.map((run) => run.taskName))), [runs]);
-  const dataMin = runs.length ? Math.min(...runs.map((run) => parseTime(run.start))) : undefined;
-  const dataMax = runs.length ? Math.max(...runs.map((run) => parseTime(run.end))) : undefined;
+  const [dataMin, dataMax] = useMemo(() => getRunBounds(runs), [runs]);
   const [activeStart, activeEnd] = getTimeWindowBounds(timeWindow, dataMin, dataMax, customRange, now);
   const hasValidCustomRangeDraft = isValidTimeRange(customRangeDraft);
   const runsInWindow = useMemo(() => runs.filter(
@@ -63,7 +66,7 @@ export function App() {
   const taskNames = useMemo(() => Array.from(new Set(runsInWindow.map((run) => run.taskName))), [runsInWindow]);
   const visibleRuns = useMemo(() => runsInWindow.filter((run) => !hiddenTasks.has(run.taskName)), [runsInWindow, hiddenTasks]);
   const visibleTaskNames = Array.from(new Set(visibleRuns.map((run) => run.taskName)));
-  const maxDuration = visibleRuns.length ? Math.max(...visibleRuns.map((run) => run.durationSeconds)) : 0;
+  const maxDuration = visibleRuns.reduce((max, run) => Math.max(max, run.durationSeconds), 0);
   const totalDuration = visibleRuns.reduce((sum, run) => sum + run.durationSeconds, 0);
 
   useEffect(() => {
@@ -299,7 +302,7 @@ export function App() {
           onChange={updateTable}
         />
         <ConfigSelect
-          disabled={!schema.views.length}
+          disabled={schemaLoading || !schema.views.length}
           emptyLabel="全部记录"
           label="视图"
           options={schema.views}
@@ -307,7 +310,7 @@ export function App() {
           onChange={(viewId) => updateSourceConfig({ viewId })}
         />
         <ConfigSelect
-          disabled={!taskSelectOptions.length}
+          disabled={schemaLoading || !taskSelectOptions.length}
           emptyLabel="未找到文本/单选字段"
           label="任务名称字段"
           options={taskSelectOptions}
@@ -315,7 +318,7 @@ export function App() {
           onChange={(taskNameFieldId) => updateSourceConfig({ taskNameFieldId })}
         />
         <ConfigSelect
-          disabled={!dateSelectOptions.length}
+          disabled={schemaLoading || !dateSelectOptions.length}
           emptyLabel="未找到日期时间字段"
           label="开始时间字段"
           options={dateSelectOptions}
@@ -323,7 +326,7 @@ export function App() {
           onChange={(startTimeFieldId) => updateSourceConfig({ startTimeFieldId })}
         />
         <ConfigSelect
-          disabled={!dateSelectOptions.length}
+          disabled={schemaLoading || !dateSelectOptions.length}
           emptyLabel="未找到日期时间字段"
           label="结束时间字段"
           options={dateSelectOptions}
@@ -331,6 +334,7 @@ export function App() {
           onChange={(endTimeFieldId) => updateSourceConfig({ endTimeFieldId })}
         />
         <ConfigSelect
+          disabled={schemaLoading}
           emptyLabel="按开始/结束时间计算"
           label="耗时字段"
           options={durationSelectOptions}
@@ -341,7 +345,7 @@ export function App() {
         {schemaLoading && <p className="save-message">正在读取字段...</p>}
         <button
           className="save-button"
-          disabled={saving || schemaLoading || !isSourceConfigReady(sourceConfig)}
+          disabled={saving || schemaLoading || !isSourceConfigValid(sourceConfig, schema)}
           onClick={() => void saveConfig(sourceConfig, themeColor)}
           type="button"
         >
@@ -357,4 +361,3 @@ export function App() {
     </main>
   );
 }
-

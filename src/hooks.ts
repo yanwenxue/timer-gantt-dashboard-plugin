@@ -46,23 +46,38 @@ export function useDashboardConfig() {
   const [saveMessage, setSaveMessage] = useState("");
   const [configError, setConfigError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [configAttempt, setConfigAttempt] = useState(0);
+  const retryConfig = useCallback(() => setConfigAttempt(value => value + 1), []);
   useEffect(() => {
     if (preview) return;
     let active = true;
+    let receivedUpdate = false;
+    let unsubscribe: (() => void) | undefined;
+    setConfigError("");
     (async () => {
       try {
         const { dashboard, DashboardState } = await import("@lark-base-open/js-sdk");
+        if (!active) return;
+        const viewing = dashboard.state === DashboardState.View || dashboard.state === DashboardState.FullScreen;
+        setDashboardMode(viewing ? "view" : "edit");
+        // Live views follow host updates; an editor keeps its unsaved local draft.
+        if (viewing) unsubscribe = dashboard.onConfigChange(({ data }) => {
+          if (!active) return;
+          receivedUpdate = true;
+          setSaved((data.customConfig ?? {}) as SavedConfig);
+          setConfigError("");
+        });
         const config = await dashboard.getConfig();
         if (!active) return;
-        setDashboardMode(dashboard.state === DashboardState.View || dashboard.state === DashboardState.FullScreen ? "view" : "edit");
-        setSaved((config.customConfig ?? {}) as SavedConfig);
+        // An event received during the initial read is newer than that read's response.
+        if (!receivedUpdate) setSaved((config.customConfig ?? {}) as SavedConfig);
         await dashboard.setRendered();
       } catch (error) {
-        if (active) setConfigError(`读取仪表盘配置失败：${error instanceof Error ? error.message : "请重新加载组件"}`);
+        if (active && !receivedUpdate) setConfigError(`读取仪表盘配置失败：${error instanceof Error ? error.message : "请重新加载组件"}`);
       }
     })();
-    return () => { active = false; };
-  }, [preview]);
+    return () => { active = false; unsubscribe?.(); };
+  }, [preview, configAttempt]);
   const saveConfig = async (config: DataSourceConfig, themeColor: string) => {
     if (preview) { setSaveMessage("演示页面无法保存仪表盘配置，请在飞书中使用"); return; }
     setSaving(true); setSaveMessage("");
@@ -75,14 +90,17 @@ export function useDashboardConfig() {
     } catch (error) { setSaveMessage(`保存失败：${error instanceof Error ? error.message : "请重试"}`); }
     finally { setSaving(false); }
   };
-  return { dashboardMode, saveMessage, saveConfig, saved, preview, configError, saving };
+  return { dashboardMode, saveMessage, saveConfig, saved, preview, configError, saving, retryConfig };
 }
 
 export function useBaseSchema(config: DataSourceConfig, legacyMapping: LegacyFieldMapping,
   onConfigResolved: (expected: DataSourceConfig, config: DataSourceConfig) => void, enabled: boolean) {
   const [schema, setSchema] = useState<BaseSchema>({ tables: [], views: [], fields: [] });
+  const [schemaTableId, setSchemaTableId] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [schemaAttempt, setSchemaAttempt] = useState(0);
+  const retrySchema = useCallback(() => setSchemaAttempt(value => value + 1), []);
   useEffect(() => {
     if (!enabled) return;
     let active = true;
@@ -91,13 +109,15 @@ export function useBaseSchema(config: DataSourceConfig, legacyMapping: LegacyFie
       try {
         const result = await loadBaseSchema(config, legacyMapping);
         if (!active) return;
-        setSchema(result.schema); setMessage("");
+        setSchema(result.schema); setSchemaTableId(result.config.tableId); setMessage("");
         if (!isSameSourceConfig(config, result.config)) onConfigResolved(config, result.config);
       } catch (error) {
         if (active) { setSchema({ tables: [], views: [], fields: [] }); setMessage(error instanceof Error ? error.message : "无法读取多维表格结构"); }
       } finally { if (active) setLoading(false); }
     })();
     return () => { active = false; };
-  }, [config, legacyMapping, onConfigResolved, enabled]);
-  return { schema, loading, message };
+  }, [config, legacyMapping, onConfigResolved, enabled, schemaAttempt]);
+  // Keep the table selector usable while never exposing another table's fields or views.
+  const currentSchema = schemaTableId === config.tableId ? schema : { tables: schema.tables, views: [], fields: [] };
+  return { schema: currentSchema, loading, message, retrySchema };
 }
