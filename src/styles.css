@@ -300,6 +300,7 @@ h2 {
   font-weight: 760;
 }
 
+.metrics .runtime.error,
 .metrics .runtime.mock {
   color: #b95737;
   border-color: rgba(255, 138, 101, 0.26);
