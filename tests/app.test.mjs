@@ -14,7 +14,7 @@ globalThis.appTestSdk = sdk;
 const { App } = await loadModule('App.tsx', {
   '@lark-base-open/js-sdk': `export const dashboard=globalThis.appTestSdk.dashboard;
     export const base=globalThis.appTestSdk.base;
-    export const DashboardState={View:'View',FullScreen:'FullScreen'};
+    export const DashboardState={Create:'Create',Config:'Config',View:'View',FullScreen:'FullScreen'};
     export const ui={showToast:async()=>true}; export const ToastType={success:'success'};`,
   './lark-data': 'export const loadLarkRuns=config=>globalThis.appTestLoadRuns(config);',
   './TimelineChart': 'export const TimelineChart=()=>null; export const taskColor=()=>"#abc";'
@@ -56,6 +56,28 @@ function setup(mode = 'Config') {
   globalThis.appTestLoadRuns = async value => { loaded.push(value); return { runs: [], skipped: 0 }; };
   return { tables, listeners, loaded, saved };
 }
+
+test('first creation initializes fields and saves without reading an existing widget config', async () => {
+  const env = setup('Create');
+  let configReads = 0, renderNotifications = 0;
+  sdk.dashboard.getConfig = async () => {
+    configReads++;
+    throw Error('currently in creation status, unable to invoke this API');
+  };
+  sdk.dashboard.setRendered = async () => { renderNotifications++; return true; };
+  const root = await mount();
+  try {
+    assert.equal(configReads, 0);
+    assert.equal(renderNotifications, 0);
+    assert.equal(root.root.findAllByProps({ role: 'alert' }).length, 0);
+    assert.equal(select(root, '数据表').props.value, 'A');
+    assert.equal(select(root, '开始时间字段').props.value, 'A_start');
+    assert.equal(save(root).props.disabled, false);
+    await act(async () => save(root).props.onClick()); await flush();
+    assert.deepEqual(env.saved[0].customConfig.sourceConfig, config('A'));
+    assert.match(JSON.stringify(root.toJSON()), /已保存/);
+  } finally { await act(async () => root.unmount()); }
+});
 
 test('table switches hide old fields while loading; only valid new-table selections can be saved', async () => {
   const env = setup(), gate = deferred();

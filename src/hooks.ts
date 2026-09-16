@@ -60,6 +60,11 @@ export function useDashboardConfig() {
         if (!active) return;
         const viewing = dashboard.state === DashboardState.View || dashboard.state === DashboardState.FullScreen;
         setDashboardMode(viewing ? "view" : "edit");
+        // A new widget has no persisted config until its first save.
+        if (dashboard.state === DashboardState.Create) {
+          setSaved({});
+          return;
+        }
         // Live views follow host updates; an editor keeps its unsaved local draft.
         if (viewing) unsubscribe = dashboard.onConfigChange(({ data }) => {
           if (!active) return;
