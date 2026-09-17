@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "./echarts";
 import type { PanelTheme } from "./theme";
@@ -18,7 +19,9 @@ export function TimelineChart({
   windowStart,
   windowEnd,
   resetKey,
-  onOpenRecord
+  onOpenRecord,
+  onRendered,
+  language
 }: {
   runs: TimerRun[];
   theme: PanelTheme;
@@ -27,9 +30,12 @@ export function TimelineChart({
   windowStart: number;
   windowEnd: number;
   resetKey: string;
+  onRendered?: () => void;
+  language?: string;
   onOpenRecord?: (run: TimerRun) => void;
 }) {
   const chartRef = useRef<HTMLDivElement | null>(null);
+  const [chartWidth, setChartWidth] = useState(0);
   const [hover, setHover] = useState<{
     x: number;
     time: number;
@@ -46,7 +52,7 @@ export function TimelineChart({
     if (!chartRef.current) return;
     const chart = echarts.init(chartRef.current);
     instance.current = chart;
-    const observer = new ResizeObserver(() => { setHover(null); chart.resize(); });
+    const observer = new ResizeObserver(() => { setHover(null); setChartWidth(chartRef.current?.clientWidth ?? 0); chart.resize(); });
     observer.observe(chartRef.current);
     return () => { observer.disconnect(); chart.dispose(); instance.current = null; };
   }, []);
@@ -56,6 +62,10 @@ export function TimelineChart({
     const container = chartRef.current;
     const chart = instance.current;
     if (!chart) return;
+    let notified = false;
+    const finished = () => { if (!notified) { notified = true; onRendered?.(); } };
+    chart.on("finished", finished);
+    const gridLeft = Math.min(198, Math.max(72, (chartWidth || container.clientWidth || 800) * 0.24));
     if (previousKey.current !== resetKey) { zoom.current = null; previousKey.current = resetKey; }
     setHover(null);
     const intervals = sortedRuns.map((run) => ({
@@ -71,7 +81,7 @@ export function TimelineChart({
       const y = (event.clientY - bounds.top) * chart.getHeight() / bounds.height;
       const bottom = chart.getHeight() - 70;
       // Include the axis labels, but leave the zoom slider to its own interaction.
-      if (x < 198 || x > chart.getWidth() - 26 || y < 28 || y >= bottom + 24) {
+      if (x < gridLeft || x > chart.getWidth() - 26 || y < 28 || y >= bottom + 24) {
         clearHover();
         return;
       }
@@ -119,6 +129,7 @@ export function TimelineChart({
       container.removeEventListener("pointerleave", clearHover);
       chart.off("datazoom", trackZoom);
       chart.off("click", openRecord);
+      chart.off("finished", finished);
     };
     if (!sortedRuns.length || !tasks.length) {
       chart.setOption({
@@ -129,13 +140,13 @@ export function TimelineChart({
           left: "center",
           top: "middle",
           style: {
-            text: "当前时间范围没有执行区间",
-            fill: "#8f959e",
+            text: t("当前时间范围没有执行区间"),
+            fill: theme.muted,
             fontSize: 14,
             fontWeight: 600
           }
         },
-        grid: { left: 198, right: 26, top: 28, bottom: 70 },
+        grid: { left: gridLeft, right: 26, top: 28, bottom: 70 },
         dataZoom: [
           {
             type: "inside",
@@ -149,13 +160,13 @@ export function TimelineChart({
             type: "slider",
             xAxisIndex: 0,
             ...zoomForBounds(zoom.current, windowStart, windowEnd),
-            height: 22,
-            bottom: 24,
-            borderColor: "#dbe5f2",
+            height: 18,
+            bottom: 10,
+            borderColor: theme.border,
             fillerColor: theme.rgba(0.2),
             backgroundColor: theme.soft,
             handleStyle: { color: theme.color },
-            textStyle: { color: "#646a73" },
+            textStyle: { color: theme.muted },
             labelFormatter: (value: number) => formatTime(value)
           }
         ],
@@ -164,13 +175,13 @@ export function TimelineChart({
           min: windowStart,
           max: windowEnd,
           axisLabel: {
-            color: "#646a73",
+            color: theme.muted,
             hideOverlap: true,
             formatter: (value: number) => formatAxisLabel(value)
           },
-          axisLine: { lineStyle: { color: "#d7e1ee" } },
-          axisTick: { lineStyle: { color: "#d7e1ee" } },
-          splitLine: { show: true, lineStyle: { color: "#edf3f9" } }
+          axisLine: { lineStyle: { color: theme.border } },
+          axisTick: { lineStyle: { color: theme.border } },
+          splitLine: { show: true, lineStyle: { color: theme.grid } }
         },
         yAxis: { show: false },
         series: []
@@ -187,18 +198,21 @@ export function TimelineChart({
       animation: false,
       graphic: [],
       backgroundColor: "transparent",
-      grid: { left: 198, right: 26, top: 28, bottom: 70 },
+      grid: { left: gridLeft, right: 26, top: 28, bottom: 70 },
       tooltip: {
         confine: true,
+        backgroundColor: theme.surface,
+        borderColor: theme.border,
+        textStyle: { color: theme.text },
         formatter: (params: { value: [number, number, number, TimerRun] }) => {
           const item = params.value[3];
           const color = taskColor(item.taskName, colorTasks, theme);
           return [
             `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;"></span><strong>${escapeHtml(item.taskName)}</strong>`,
-            `开始：${escapeHtml(formatTime(item.start))}`,
-            `结束：${escapeHtml(formatTime(item.end))}`,
-            `耗时：${formatDuration(item.durationSeconds)}`,
-            item.tableId ? "点击打开行详情" : ""
+            t("开始：{time}", { time: escapeHtml(formatTime(item.start)) }),
+            t("结束：{time}", { time: escapeHtml(formatTime(item.end)) }),
+            t("耗时：{duration}", { duration: formatDuration(item.durationSeconds) }),
+            item.tableId ? t("点击打开行详情") : ""
           ].filter(Boolean).join("<br/>");
         }
       },
@@ -216,13 +230,13 @@ export function TimelineChart({
           type: "slider",
           xAxisIndex: 0,
           ...zoomForBounds(zoom.current, min, max),
-          height: 22,
-          bottom: 24,
-          borderColor: "#dbe5f2",
+          height: 18,
+          bottom: 10,
+          borderColor: theme.border,
           fillerColor: theme.rgba(0.2),
           backgroundColor: theme.soft,
           handleStyle: { color: theme.color },
-          textStyle: { color: "#646a73" },
+          textStyle: { color: theme.muted },
           labelFormatter: (value: number) => formatTime(value),
           filterMode: "weakFilter"
         }
@@ -232,13 +246,13 @@ export function TimelineChart({
         min,
         max,
         axisLabel: {
-          color: "#646a73",
+          color: theme.muted,
           hideOverlap: true,
           formatter: (value: number) => formatAxisLabel(value)
         },
-        axisLine: { lineStyle: { color: "#d7e1ee" } },
-        axisTick: { lineStyle: { color: "#d7e1ee" } },
-        splitLine: { show: true, lineStyle: { color: "#edf3f9" } }
+        axisLine: { lineStyle: { color: theme.border } },
+        axisTick: { lineStyle: { color: theme.border } },
+        splitLine: { show: true, lineStyle: { color: theme.grid } }
       },
       yAxis: {
         show: true,
@@ -248,9 +262,9 @@ export function TimelineChart({
         axisLine: { show: false },
         axisTick: { show: false },
         axisLabel: {
-          width: 170,
+          width: gridLeft - 28,
           overflow: "truncate",
-          color: "#343a45",
+          color: theme.text,
           fontWeight: 600
         }
       },
@@ -326,7 +340,7 @@ export function TimelineChart({
     }, { replaceMerge: ["series", "graphic", "dataZoom"] });
 
     return cleanup;
-  }, [sortedRuns, tasks, theme, colorTasks, timeWindow, resetKey, windowStart, windowEnd, onOpenRecord]);
+  }, [sortedRuns, tasks, theme, colorTasks, timeWindow, resetKey, windowStart, windowEnd, onOpenRecord, onRendered, language, chartWidth]);
 
   return (
     <div className="chart">
@@ -345,15 +359,15 @@ export function TimelineChart({
           <strong>{formatTime(hover.time)}</strong>
           <div className="timeline-hover-summary">
             {hover.matches.length
-              ? `${hover.matches.length} 个任务 · ${hover.matches.reduce((sum, match) => sum + match.count, 0)} 次执行`
-              : "此刻无任务执行"}
+              ? t("{tasks} 个任务 · {runs} 次执行", { tasks: hover.matches.length, runs: hover.matches.reduce((sum, match) => sum + match.count, 0) })
+              : t("此刻无任务执行")}
           </div>
           {hover.matches.slice(0, 5).map((match) => <div className="timeline-hover-task" key={match.taskName}>
             <i style={{ background: taskColor(match.taskName, colorTasks, theme) }} />
             <span>{match.taskName}</span>
             {match.count > 1 && <b>×{match.count}</b>}
           </div>)}
-          {hover.matches.length > 5 && <div className="timeline-hover-summary">另有 {hover.matches.length - 5} 个任务，见竖线交点</div>}
+          {hover.matches.length > 5 && <div className="timeline-hover-summary">{t("另有 {count} 个任务，见竖线交点", { count: hover.matches.length - 5 })}</div>}
         </div>
       </div>}
     </div>

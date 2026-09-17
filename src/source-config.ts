@@ -1,7 +1,9 @@
+import { t } from "./i18n";
 import type { BaseSchema, DataSourceConfig, LegacyFieldMapping, FieldOption, FieldRole, SelectOption } from "./types";
 export const emptySourceConfig: DataSourceConfig = {
   tableId: "",
   viewId: "",
+  identityFieldId: "",
   taskNameFieldId: "",
   startTimeFieldId: "",
   endTimeFieldId: "",
@@ -62,14 +64,15 @@ export function fieldTypeLabel(type: number): string {
     1005: "自动编号"
   };
 
-  return labels[type] ?? `类型 ${type}`;
+  return labels[type] ? t(labels[type]) : t("类型 {type}", { type });
 }
 
 export function toFieldSelectOptions(fields: FieldOption[]): SelectOption[] {
   return fields.map((field) => ({
     id: field.id,
     name: field.name,
-    meta: fieldTypeLabel(field.type)
+    meta: fieldTypeLabel(field.type),
+    type: field.type
   }));
 }
 
@@ -88,6 +91,7 @@ export function normalizeSourceConfig(
   const secondDateFieldId = dateFields.find((field) => field.id !== firstDateFieldId)?.id ?? firstDateFieldId;
 
   return {
+    identityFieldId: current.identityFieldId || (!current.taskNameFieldId ? schema.fields.find(field => field.type === 1005)?.id : "") || "",
     tableId: current.tableId || schema.tables[0]?.id || "",
     viewId: current.viewId,
     taskNameFieldId:
@@ -103,12 +107,14 @@ export function normalizeSourceConfig(
       current.endTimeFieldId ||
       findFieldByName(schema.fields, legacyMapping.endTime, "endTime") ||
       secondDateFieldId,
-    durationSecondsFieldId: current.durationSecondsFieldId
+    durationSecondsFieldId: current.durationSecondsFieldId || (!current.taskNameFieldId
+      ? findFieldByName(schema.fields, legacyMapping.durationSeconds, "durationSeconds") : "")
   };
 }
 
 export function isSameSourceConfig(left: DataSourceConfig, right: DataSourceConfig): boolean {
   return (
+    (left.identityFieldId || "") === (right.identityFieldId || "") &&
     left.tableId === right.tableId &&
     left.viewId === right.viewId &&
     left.taskNameFieldId === right.taskNameFieldId &&

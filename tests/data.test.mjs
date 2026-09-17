@@ -8,17 +8,23 @@ const config = {...emptySourceConfig,tableId:'t',taskNameFieldId:'name',startTim
 const start=Date.UTC(2026,8,14,2,0,9,125), end=start+61_250;
 function table(rows,visible=Object.keys(rows)) {
   const calls=[];
-  return {id:'t',calls,getRecordIdList:async()=>Object.keys(rows),
-    getViewById:async id=>{calls.push('view:'+id);if(id!=='v')throw Error('view missing');return {getVisibleRecordIdList:async()=>visible};},
-    getFieldById:async field=>({getCellString(){throw Error('must read raw values');},getFieldValueList:async()=>{
-      calls.push('column:'+field);return Object.entries(rows).map(([id,row])=>({record_id:id,value:row[field]}));
-    }})};
+  return {id:'t',calls,
+    getViewById:async id=>{if(id!=='v')throw Error('view missing');return {id};},
+    getRecords:async params=>{
+      calls.push(params);
+      assert(params.pageSize <= 200);
+      const ids=params.viewId ? visible : Object.keys(rows);
+      const offset=params.pageToken ? Number(params.pageToken.slice(5)) : 0;
+      const next=offset+params.pageSize;
+      return {records:ids.slice(offset,next).map(recordId=>({recordId,fields:rows[recordId]})),
+        total:ids.length,hasMore:next<ids.length,pageToken:next<ids.length ? 'next:'+next : undefined};
+    }};
 }
 test('batch read preserves milliseconds, supported task names and computes missing durations',async()=>{
  const t=table({a:{name:[{text:'订单'},{text:'同步'}],start,end},b:{name:{text:'库存'},start,end:start+1}});
  const result=await readTableRuns(t,config);
  assert.equal(result.skipped,0);assert.equal(result.runs[0].start,start);assert.equal(result.runs[0].durationSeconds,61.25);
- assert.equal(result.runs[1].durationSeconds,.001);assert.equal(result.runs[0].taskName,'订单同步');assert.equal(t.calls.length,3);
+ assert.equal(result.runs[1].durationSeconds,.001);assert.equal(result.runs[0].taskName,'订单同步');assert.equal(t.calls.length,1);
 });
 test('whole-table and filtered views remain distinct; deleted view is an error',async()=>{
  const t=table({a:{name:'A',start,end},b:{name:'B',start,end}},['a']);
@@ -37,13 +43,37 @@ test('invalid names/dates and reversed intervals are counted, never replaced by 
  assert(Number.isNaN(time.parseTime('bad date')));assert(Number.isNaN(time.parseTime('')));
  assert.equal(time.parseTime('2026-09-14T10:00:09.125+08:00'),start);
 });
-test('1000 records require four column calls, not 4000 cell calls',async()=>{
+test('1000 records use five bounded pages instead of per-cell requests',async()=>{
  const t=table(Object.fromEntries(Array.from({length:1000},(_,i)=>[String(i),{name:'A',start,end,duration:60}])));
  assert.equal((await readTableRuns(t,{...config,durationSecondsFieldId:'duration'})).runs.length,1000);
- assert.equal(t.calls.length,4);
+ assert.equal(t.calls.length,5);
+ assert.deepEqual(t.calls.map(call=>call.pageToken),[undefined,'next:200','next:400','next:600','next:800']);
 });
-test('empty table stays empty and does not read columns',async()=>{
- const t=table({});assert.deepEqual(await readTableRuns(t,config),{runs:[],skipped:0});assert.equal(t.calls.length,0);
+test('empty table stops at the first page',async()=>{
+ const t=table({});assert.deepEqual(await readTableRuns(t,config),{runs:[],skipped:0});assert.equal(t.calls.length,1);
+});
+test('201 records load completely for both legacy and filtered configurations, including a selected view',async()=>{
+ const rows=Object.fromEntries(Array.from({length:402},(_,i)=>['r'+i,{name:'A',start,end,identity:'RUN-'+i}]));
+ const visible=Object.keys(rows).slice(201);
+ for(const viewId of ['', 'v']) {
+  const t=table(rows,visible),ids=viewId ? visible : Object.keys(rows);
+  const legacy=await readTableRuns(t,{...config,viewId});
+  assert.equal(legacy.runs.length,ids.length);assert.equal(legacy.skipped,0);
+  assert(t.calls.every(call=>call.viewId===(viewId||undefined)));
+  const last=ids.at(-1);
+  const data=[[{value:'identity'}],[{value:rows[last].identity},{value:1}]];
+  const filtered=await readTableRuns(t,{...config,viewId,identityFieldId:'identity'},data);
+  assert.deepEqual(filtered.runs.map(run=>run.id),[last]);
+ }
+});
+test('a later page failure or broken cursor fails the whole load rather than returning partial records',async()=>{
+ const first={records:[{recordId:'a',fields:{name:'A',start,end}}],hasMore:true,pageToken:'next'};
+ let calls=0;
+ await assert.rejects(readTableRuns({getRecords:async()=>{if(++calls===1)return first;throw Error('page denied');}},config),/page denied/);
+ await assert.rejects(readTableRuns({getRecords:async()=>({...first,pageToken:undefined})},config),/分页异常/);
+ calls=0;
+ await assert.rejects(readTableRuns({getRecords:async()=>{calls++;return first;}},config),/分页异常/);
+ assert.equal(calls,2);
 });
 test('saved empty options and missing selected ids are not silently replaced',()=>{
  const schema={tables:[{id:'t'}],views:[{id:'v'}],fields:[{id:'name',type:1},{id:'start',type:5},{id:'end',type:5},{id:'retries',type:2}]};

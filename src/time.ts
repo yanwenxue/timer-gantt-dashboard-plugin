@@ -1,3 +1,4 @@
+import { getLanguage, t } from "./i18n";
 import type { TimerRun, TimeWindow, TimeRange } from "./types";
 export const hourMs = 60 * 60 * 1000;
 export const dayMs = 24 * hourMs;
@@ -22,7 +23,7 @@ export function parseTime(value: string | number): number {
 }
 
 export function formatTime(ms: number): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(getLanguage(), {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -34,7 +35,7 @@ export function formatTime(ms: number): string {
 
 export function formatAxisLabel(ms: number): string {
   const date = new Date(ms);
-  const range = new Intl.DateTimeFormat("zh-CN", {
+  const range = new Intl.DateTimeFormat(getLanguage(), {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -45,11 +46,11 @@ export function formatAxisLabel(ms: number): string {
 }
 
 export function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Number(seconds.toFixed(3))} 秒`;
+  if (seconds < 60) return `${Number(seconds.toFixed(3))} ${t("秒")}`;
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
-  return [h ? `${h} 小时` : "", m ? `${m} 分` : "", s ? `${s} 秒` : ""].filter(Boolean).join(" ");
+  return [h ? `${h} ${t("小时")}` : "", m ? `${m} ${t("分")}` : "", s ? `${s} ${t("秒")}` : ""].filter(Boolean).join(" ");
 }
 
 export function byStartTime(a: TimerRun, b: TimerRun) {

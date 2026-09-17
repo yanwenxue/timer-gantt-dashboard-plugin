@@ -14,7 +14,7 @@ export function isThemeColor(value: unknown): value is string {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
 }
 
-export function createTheme(color: string) {
+export function createTheme(color: string, dark = false) {
   const rgb = [1, 3, 5].map((start) => parseInt(color.slice(start, start + 2), 16));
   const mix = (target: number, ratio: number) => `rgb(${rgb.map((value) => Math.round(value * (1 - ratio) + target * ratio)).join(", ")})`;
   const [r, g, b] = rgb.map((value) => value / 255);
@@ -25,22 +25,22 @@ export function createTheme(color: string) {
   const linear = rgb.map((value) => value / 255 <= 0.04045 ? value / 255 / 12.92 : ((value / 255 + 0.055) / 1.055) ** 2.4);
   const luminance = linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
   const foreground = luminance > 0.179 ? "#172033" : "#ffffff";
-  const strong = mix(0, 0.58);
-  const soft = mix(255, 0.9);
+  const strong = dark ? mix(255, 0.55) : mix(0, 0.58);
+  const soft = dark ? mix(0, 0.76) : mix(255, 0.9);
   const rgba = (alpha: number) => `rgba(${rgb.join(", ")}, ${alpha})`;
   // Keep task bars visible even when the selected panel color is near white or black.
-  const palette = [0, 48, 190, 95, 255, 315].map((offset) => `hsl(${(hue + offset) % 360}, ${delta < 0.05 ? 12 : 55}%, 42%)`);
+  const palette = [0, 48, 190, 95, 255, 315].map((offset) => `hsl(${(hue + offset) % 360}, ${delta < 0.05 ? 12 : 55}%, ${dark ? 62 : 42}%)`);
   const style = {
     "--theme-accent": color,
     "--theme-foreground": foreground,
     "--theme-strong": strong,
     "--theme-soft": soft,
-    "--theme-border": mix(255, 0.68),
+    "--theme-border": dark ? mix(0, 0.48) : mix(255, 0.68),
     "--theme-glow": rgba(0.16),
-    "--theme-background": mix(255, 0.95),
-    "--theme-surface": mix(255, 0.98)
+    "--theme-background": dark ? mix(0, 0.90) : mix(255, 0.95),
+    "--theme-surface": dark ? mix(0, 0.85) : mix(255, 0.98)
   } as CSSProperties;
-  return { color, strong, soft, rgba, palette, style };
+  return { dark, text: dark ? "#e8edf5" : "#343a45", muted: dark ? "#b3bdce" : "#646a73", border: dark ? "#485262" : "#d7e1ee", grid: dark ? "#323a48" : "#edf3f9", surface: dark ? "#202630" : "#ffffff", color, strong, soft, rgba, palette, style };
 }
 
 export type PanelTheme = ReturnType<typeof createTheme>;

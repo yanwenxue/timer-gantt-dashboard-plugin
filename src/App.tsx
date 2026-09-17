@@ -1,5 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { t } from "./i18n";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, Check, Clock3, ListTree, RefreshCw, TimerReset } from "lucide-react";
+import { useHostAppearance } from "./host";
 import { createTheme } from "./theme";
 import { applyDashboardTheme, loadThemePreference, selectThemeColor } from "./theme-preference";
 import type { TimerRun, DataSourceConfig, LegacyFieldMapping, TimeWindow, TimeRange } from "./types";
@@ -14,20 +16,21 @@ export function App() {
   const setThemeColor = useCallback((color: string) => {
     setThemePreference(selectThemeColor(color));
   }, []);
-  const theme = useMemo(() => createTheme(themeColor), [themeColor]);
   const [sourceConfig, setSourceConfig] = useState<DataSourceConfig>(emptySourceConfig);
-  const [legacyMapping, setLegacyMapping] = useState<LegacyFieldMapping>(defaultLegacyMapping);
+  const [legacyMapping, setLegacyMapping] = useState<LegacyFieldMapping>({ ...defaultLegacyMapping, tableName: "" });
   const [hiddenTasks, setHiddenTasks] = useState<Set<string>>(() => new Set());
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("today");
   const [customRangeDraft, setCustomRangeDraft] = useState<TimeRange>(() => getTodayInputRange());
   const [customRange, setCustomRange] = useState<TimeRange>(() => getTodayInputRange());
   const { dashboardMode, saveMessage, saveConfig, saved, preview, configError, saving, retryConfig } = useDashboardConfig();
+  const { language, dark, fullScreen, ready: appearanceReady } = useHostAppearance(preview);
+  const theme = useMemo(() => createTheme(themeColor, dark), [themeColor, dark]);
   const [configReady, setConfigReady] = useState(false);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    if (!saved) return;
+    if (!saved) { setConfigReady(false); return; }
     setSourceConfig({ ...emptySourceConfig, ...saved.sourceConfig });
-    setLegacyMapping({ ...defaultLegacyMapping, ...saved.fieldMapping });
+    setLegacyMapping({ ...defaultLegacyMapping, tableName: "", ...saved.fieldMapping });
     setThemePreference(current => applyDashboardTheme(current, saved.themeColor));
     setConfigReady(true);
   }, [saved]);
@@ -42,9 +45,27 @@ export function App() {
     sourceConfig,
     legacyMapping,
     resolveConfig,
-    configReady && !preview
+    configReady && !preview && dashboardMode === "edit"
   );
-  const { runs, mode, message, loading, reload } = useTimerRuns(sourceConfig, configReady, preview);
+  const { runs, mode, message, loading, reload, ready } = useTimerRuns(sourceConfig, configReady, preview);
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.lang = language;
+      document.title = t("秒级甘特图");
+    }
+  }, [language]);
+  const renderReady = appearanceReady && ((ready && !schemaLoading) || Boolean(configError || schemaMessage));
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const renderStatus = useRef({ ready: renderReady, runs, sourceConfig, language, theme });
+  renderStatus.current = { ready: renderReady, runs, sourceConfig, language, theme };
+  const onRendered = useCallback(() => {
+    if (preview || !renderReady) return;
+    void import("@lark-base-open/js-sdk").then(({ dashboard }) => {
+      const current = renderStatus.current;
+      if (mounted.current && current.ready && current.runs === runs && current.sourceConfig === sourceConfig && current.language === language && current.theme === theme) return dashboard.setRendered();
+    }).catch(() => {});
+  }, [preview, renderReady, runs, sourceConfig, language, theme]);
   const refresh = () => {
     setNow(Date.now());
     if (configError) retryConfig();
@@ -115,7 +136,7 @@ export function App() {
   const openRecordDetail = useCallback(async (run: TimerRun) => {
     try {
       if (!run.tableId) {
-        throw new Error("示例数据没有对应的多维表格行");
+        throw new Error(t("示例数据没有对应的多维表格行"));
       }
 
       const { ui } = await import("@lark-base-open/js-sdk");
@@ -124,7 +145,7 @@ export function App() {
         recordId: run.id
       });
       if (!opened) {
-        throw new Error("打开行详情失败");
+        throw new Error(t("打开行详情失败"));
       }
     } catch (error) {
       console.warn(error);
@@ -151,66 +172,67 @@ export function App() {
         window.open(url, "_blank", "noopener,noreferrer");
         await ui.showToast({
           toastType: ToastType.info,
-          message: "已打开对应行链接"
+          message: t("已打开对应行链接")
         });
       } catch {
-        window.alert("当前无法打开行详情，请确认在飞书仪表盘环境中使用");
+        window.alert(t("当前无法打开行详情，请确认在飞书仪表盘环境中使用"));
       }
     }
   }, []);
 
   return (
-    <main className={dashboardMode === "view" ? "plugin-shell view-only" : "plugin-shell"} style={theme.style}>
+    <main className={dashboardMode === "view" ? "plugin-shell view-only" : "plugin-shell"} style={theme.style} data-theme={dark ? "dark" : "light"} data-fullscreen={fullScreen} lang={language}>
       <section className="visual-pane">
         <header className="topbar">
           <div>
             <span className="eyebrow">Timer Execution Timeline</span>
-            <h1>秒级甘特图</h1>
-            {(configError || message) && <p role={configError || mode === "error" ? "alert" : "status"}>{configError || message}</p>}
+            <h1>{t("秒级甘特图")}</h1>
+            {(configError || schemaMessage || message) && <p role={configError || schemaMessage || mode === "error" ? "alert" : "status"}>{t(configError || schemaMessage || message)}</p>}
           </div>
           <div className="topbar-actions">
             <ThemePicker color={themeColor} onChange={setThemeColor} dashboardMode={dashboardMode} persistence={themePreference.persistence} />
-            <button className="icon-button" onClick={refresh} title="刷新数据" type="button">
+            <button className="icon-button" onClick={refresh} title={t("刷新数据")} type="button">
               <RefreshCw size={17} className={loading ? "spin" : ""} />
             </button>
           </div>
         </header>
 
+        {!preview && configReady && !sourceConfig.identityFieldId && <p className="save-message" role="status">{t("请选择记录唯一标识，预览并保存后即可应用仪表盘筛选。")}</p>}
         <div className="metrics">
           <div className="metric-card">
             <TimerReset size={16} />
             <span>
               <b>{visibleRuns.length} / {runsInWindow.length}</b>
-              <small>执行记录</small>
+              <small>{t("执行记录")}</small>
             </span>
           </div>
           <div className="metric-card">
             <ListTree size={16} />
             <span>
               <b>{visibleTaskNames.length} / {taskNames.length}</b>
-              <small>任务类型</small>
+              <small>{t("任务类型")}</small>
             </span>
           </div>
           <div className="metric-card">
             <CalendarClock size={16} />
             <span>
               <b>{formatDuration(maxDuration)}</b>
-              <small>最长耗时</small>
+              <small>{t("最长耗时")}</small>
             </span>
           </div>
           <div className="metric-card">
             <Clock3 size={16} />
             <span>
               <b>{formatDuration(totalDuration)}</b>
-              <small>累计耗时</small>
+              <small>{t("累计耗时")}</small>
             </span>
           </div>
-          <div className={`runtime ${mode}`}>{mode === "lark" ? "飞书数据" : mode === "error" ? "读取失败" : "演示数据"}</div>
+          <div className={`runtime ${mode}`}>{mode === "lark" ? t("飞书数据") : mode === "error" ? t("读取失败") : t("演示数据")}</div>
         </div>
 
-        <div className="range-bar">
+        <div className="range-bar" data-custom={timeWindow === "custom"}>
           <span>{`${formatTime(activeStart)} - ${formatTime(activeEnd)}`}</span>
-          <div className="window-switcher" aria-label="时间范围">
+          <div className="window-switcher" aria-label={t("时间范围")}>
             {timeWindowOptions.map((option) => (
               <button
                 key={option.key}
@@ -218,13 +240,13 @@ export function App() {
                 onClick={() => setTimeWindow(option.key)}
                 type="button"
               >
-                {option.label}
+                {t(option.label)}
               </button>
             ))}
           </div>
-          <div className="custom-range" aria-label="自选时间范围">
+          <div className="custom-range" aria-label={t("自选时间范围")}>
             <input
-              aria-label="开始时间"
+              aria-label={t("开始时间")}
               type="datetime-local"
               step={1}
               value={customRangeDraft.start}
@@ -240,9 +262,9 @@ export function App() {
                 }
               }}
             />
-            <span>至</span>
+            <span>{t("至")}</span>
             <input
-              aria-label="结束时间"
+              aria-label={t("结束时间")}
               type="datetime-local"
               step={1}
               value={customRangeDraft.end}
@@ -258,16 +280,16 @@ export function App() {
                 }
               }}
             />
-            {timeWindow === "custom" && !hasValidCustomRangeDraft && <em>结束时间需晚于开始时间</em>}
+            {timeWindow === "custom" && !hasValidCustomRangeDraft && <em>{t("结束时间需晚于开始时间")}</em>}
           </div>
-          <div className="legend-strip" role="list" aria-label="任务类型筛选">
+          <div className="legend-strip" role="list" aria-label={t("任务类型筛选")}>
             {taskNames.map((taskName) => (
               <button
                 key={taskName}
                 className={hiddenTasks.has(taskName) ? "legend-item off" : "legend-item"}
                 onClick={() => toggleTask(taskName)}
                 type="button"
-                title={hiddenTasks.has(taskName) ? "点击显示该任务" : "点击隐藏该任务"}
+                title={hiddenTasks.has(taskName) ? t("点击显示该任务") : t("点击隐藏该任务")}
               >
                 <i style={{ background: taskColor(taskName, taskNames, theme) }} />
                 {taskName}
@@ -285,77 +307,86 @@ export function App() {
           windowEnd={activeEnd}
           resetKey={`${sourceConfig.tableId}:${sourceConfig.viewId}:${timeWindow}:${timeWindow === "custom" ? `${customRange.start}:${customRange.end}` : ""}`}
           onOpenRecord={openRecordDetail}
+          onRendered={onRendered}
+          language={language}
         />
       </section>
 
       {dashboardMode === "edit" && <aside className="config-pane">
         <div className="config-head">
-          <h2>数据配置</h2>
-          <p>点击每项右侧箭头，下拉选择当前多维表格里的数据表、视图和字段</p>
+          <h2>{t("数据配置")}</h2>
+          <p>{t("点击每项右侧箭头，下拉选择当前多维表格里的数据表、视图和字段")}</p>
         </div>
         <ConfigSelect
           disabled={!schema.tables.length}
-          emptyLabel="暂无可选数据表"
-          label="数据表"
+          emptyLabel={t("暂无可选数据表")}
+          label={t("数据表")}
           options={schema.tables}
           value={sourceConfig.tableId}
           onChange={updateTable}
         />
         <ConfigSelect
           disabled={schemaLoading || !schema.views.length}
-          emptyLabel="全部记录"
-          label="视图"
+          emptyLabel={t("全部记录")}
+          label={t("视图")}
           options={schema.views}
           value={sourceConfig.viewId}
           onChange={(viewId) => updateSourceConfig({ viewId })}
         />
         <ConfigSelect
           disabled={schemaLoading || !taskSelectOptions.length}
-          emptyLabel="未找到文本/单选字段"
-          label="任务名称字段"
+          emptyLabel={t("未找到文本/单选字段")}
+          label={t("任务名称字段")}
           options={taskSelectOptions}
           value={sourceConfig.taskNameFieldId}
           onChange={(taskNameFieldId) => updateSourceConfig({ taskNameFieldId })}
         />
         <ConfigSelect
           disabled={schemaLoading || !dateSelectOptions.length}
-          emptyLabel="未找到日期时间字段"
-          label="开始时间字段"
+          emptyLabel={t("未找到日期时间字段")}
+          label={t("开始时间字段")}
           options={dateSelectOptions}
           value={sourceConfig.startTimeFieldId}
           onChange={(startTimeFieldId) => updateSourceConfig({ startTimeFieldId })}
         />
         <ConfigSelect
           disabled={schemaLoading || !dateSelectOptions.length}
-          emptyLabel="未找到日期时间字段"
-          label="结束时间字段"
+          emptyLabel={t("未找到日期时间字段")}
+          label={t("结束时间字段")}
           options={dateSelectOptions}
           value={sourceConfig.endTimeFieldId}
           onChange={(endTimeFieldId) => updateSourceConfig({ endTimeFieldId })}
         />
         <ConfigSelect
           disabled={schemaLoading}
-          emptyLabel="按开始/结束时间计算"
-          label="耗时字段"
+          emptyLabel={t("按开始/结束时间计算")}
+          label={t("耗时字段")}
           options={durationSelectOptions}
           value={sourceConfig.durationSecondsFieldId}
           onChange={(durationSecondsFieldId) => updateSourceConfig({ durationSecondsFieldId })}
         />
+        <ConfigSelect
+          disabled={schemaLoading}
+          emptyLabel={t("请选择非空且唯一的字段")}
+          label={t("记录唯一标识")}
+          options={toFieldSelectOptions(schema.fields.filter(field => [1, 2, 1005].includes(field.type)))}
+          value={sourceConfig.identityFieldId || ""}
+          onChange={identityFieldId => updateSourceConfig({ identityFieldId })}
+        />
+        <p className="save-message">{t("推荐使用自动编号字段，用于关联仪表盘筛选结果与原始执行记录。")}</p>
         {schemaMessage && <p className="save-message error">{schemaMessage}</p>}
-        {schemaLoading && <p className="save-message">正在读取字段...</p>}
+        {schemaLoading && <p className="save-message">{t("正在读取字段...")}</p>}
         <button
           className="save-button"
-          disabled={saving || schemaLoading || !isSourceConfigValid(sourceConfig, schema)}
+          disabled={saving || schemaLoading || loading || mode === "error" || !sourceConfig.identityFieldId || !schema.fields.some(field => field.id === sourceConfig.identityFieldId && [1, 2, 1005].includes(field.type)) || !isSourceConfigValid(sourceConfig, schema)}
           onClick={() => void saveConfig(sourceConfig, themeColor)}
           type="button"
         >
-          <Check size={16} />
-          保存到仪表盘
-        </button>
-        {saveMessage && <p className="save-message">{saveMessage}</p>}
+          <Check size={16} />{t("保存到仪表盘")}</button>
+        {saveMessage && <p className="save-message">{t(saveMessage)}</p>}
         <div className="config-note">
-          <strong>使用方式</strong>
-          <span>保存后回到仪表盘页面，组件会以展示态加载，只保留左侧图表。</span>
+          <strong>{t("使用方式")}</strong>
+          <span>{t("保存后回到仪表盘页面，组件会以展示态加载，只保留左侧图表。")}</span>
         </div>
       </aside>}
     </main>

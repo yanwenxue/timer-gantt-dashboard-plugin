@@ -19,6 +19,7 @@ export type LegacyFieldMapping = {
 export type DataSourceConfig = {
   tableId: string;
   viewId: string;
+  identityFieldId?: string;
   taskNameFieldId: string;
   startTimeFieldId: string;
   endTimeFieldId: string;
@@ -45,6 +46,7 @@ export type SelectOption = {
   id: string;
   name: string;
   meta?: string;
+  type?: number;
 };
 
 export type BaseSchema = {

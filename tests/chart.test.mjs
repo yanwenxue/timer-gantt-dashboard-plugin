@@ -8,15 +8,16 @@ const {createTheme}=await loadModule('theme.ts');
 const {zoomForBounds}=await loadModule('chart-state.ts');
 const {TimelineChart}=await loadModule('TimelineChart.tsx',{'./echarts':'export const init = element => globalThis.testInitChart(element); export const graphic={};'});
 test('chart survives rerenders, preserves zoom, resets on new range and escapes tooltip',async()=>{
- let inits=0,disposes=0,observed=0,root;const handlers=new Map(),options=[];
+ let inits=0,disposes=0,observed=0,rendered=0,root;const handlers=new Map(),options=[];
  const chart={setOption(o){options.push(o);},getOption(){return {dataZoom:[{start:20,end:70,startValue:2000,endValue:7000}]};},
  on(name,fn){handlers.set(name,fn);},off(name){handlers.delete(name);},resize(){},dispose(){disposes++;}};
  globalThis.testInitChart=()=>{inits++;return chart;};
  globalThis.ResizeObserver=class{observe(){observed++;}disconnect(){observed--;}};
- const node={addEventListener(){},removeEventListener(){}};
+ const node={clientWidth:800,addEventListener(){},removeEventListener(){}};
  const run={id:'r',taskName:'<img src=x onerror="evil()"> & test',start:1000,end:9000,durationSeconds:8};
- const props={runs:[run],colorTasks:[run.taskName],theme:createTheme('#58b7a4'),timeWindow:'custom',windowStart:0,windowEnd:10000,resetKey:'rangeA'};
+ const props={runs:[run],colorTasks:[run.taskName],theme:createTheme('#58b7a4'),timeWindow:'custom',windowStart:0,windowEnd:10000,resetKey:'rangeA',onRendered:()=>{rendered++;}};
  await act(async()=>{root=TestRenderer.create(React.createElement(TimelineChart,props),{createNodeMock:()=>node});});
+ assert.equal(rendered,0);handlers.get('finished')();handlers.get('finished')();assert.equal(rendered,1);
  const html=options.at(-1).tooltip.formatter({value:[1000,9000,0,run]});assert(!html.includes('<img'));assert(html.includes('&lt;img'));assert(html.includes('&amp;'));
  await act(async()=>handlers.get('datazoom')());
  await act(async()=>root.update(React.createElement(TimelineChart,{...props,runs:[run],theme:createTheme('#4285e6')})));
