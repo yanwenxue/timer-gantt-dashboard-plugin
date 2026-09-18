@@ -3,7 +3,6 @@ import type { BaseSchema, DataSourceConfig, LegacyFieldMapping, FieldOption, Fie
 export const emptySourceConfig: DataSourceConfig = {
   tableId: "",
   viewId: "",
-  identityFieldId: "",
   taskNameFieldId: "",
   startTimeFieldId: "",
   endTimeFieldId: "",
@@ -91,7 +90,6 @@ export function normalizeSourceConfig(
   const secondDateFieldId = dateFields.find((field) => field.id !== firstDateFieldId)?.id ?? firstDateFieldId;
 
   return {
-    identityFieldId: current.identityFieldId || (!current.taskNameFieldId ? schema.fields.find(field => field.type === 1005)?.id : "") || "",
     tableId: current.tableId || schema.tables[0]?.id || "",
     viewId: current.viewId,
     taskNameFieldId:
@@ -114,7 +112,6 @@ export function normalizeSourceConfig(
 
 export function isSameSourceConfig(left: DataSourceConfig, right: DataSourceConfig): boolean {
   return (
-    (left.identityFieldId || "") === (right.identityFieldId || "") &&
     left.tableId === right.tableId &&
     left.viewId === right.viewId &&
     left.taskNameFieldId === right.taskNameFieldId &&

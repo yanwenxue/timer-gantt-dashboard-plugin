@@ -25,7 +25,6 @@ test('initialization skips unsuitable tables and reuses metadata from the suitab
   assert.equal(result.config.tableId,'executions');
   assert.equal(result.config.startTimeFieldId,'start');
   assert.equal(result.config.endTimeFieldId,'end');
-  assert.equal(result.config.identityFieldId,'identity');
   assert.deepEqual(tables.map(item=>item.reads),[1,1,1,0]);
   assert.equal(result.schema.tables.length,4);
 });

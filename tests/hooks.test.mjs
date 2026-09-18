@@ -4,8 +4,8 @@ import React from 'react';
 import TestRenderer,{act} from 'react-test-renderer';
 import {loadModule} from './load-module.mjs';
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
-const {useTimerRuns}=await loadModule('hooks.ts',{'@lark-base-open/js-sdk':'export const dashboard={onDataChange:callback=>{globalThis.testDataChange=callback;return()=>{};}}; export const base={getTableById:async()=>({onRecordModify:callback=>{globalThis.testRecordChange=callback;return()=>{globalThis.testRecordOff=(globalThis.testRecordOff||0)+1;};}})};', './lark-data':'export const loadLarkRuns = (config,data) => globalThis.testLoadRuns(config,data);'});
-const config={tableId:'A',viewId:'',identityFieldId:'id',taskNameFieldId:'n',startTimeFieldId:'s',endTimeFieldId:'e',durationSecondsFieldId:''};
+const {useTimerRuns}=await loadModule('hooks.ts',{'@lark-base-open/js-sdk':'export const dashboard={onDataChange:callback=>{globalThis.testDataChange=callback;return()=>{};}}; export const base={getTableById:async()=>({onRecordAdd:callback=>{globalThis.testRecordAdd=callback;return()=>{globalThis.testRecordOff++;};},onRecordDelete:callback=>{globalThis.testRecordDelete=callback;return()=>{globalThis.testRecordOff++;};},onRecordModify:callback=>{globalThis.testRecordChange=callback;return()=>{globalThis.testRecordOff=(globalThis.testRecordOff||0)+1;};}})};', './lark-data':'export const loadLarkRuns = (config,data) => globalThis.testLoadRuns(config,data);'});
+const config={tableId:'A',viewId:'',taskNameFieldId:'n',startTimeFieldId:'s',endTimeFieldId:'e',durationSecondsFieldId:''};
 const run=id=>({id,tableId:id,taskName:id,start:1000,end:2000,durationSeconds:1});
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 test('real hook ignores late old requests, including old errors and loading completion',async()=>{
@@ -41,29 +41,16 @@ test('two refreshes accept only the latest result and unmount invalidates pendin
  await act(async()=>{p=state.reload();});await act(async()=>root.unmount());await act(async()=>{pending.resolve({runs:[run('late')],skipped:0});await p;});
 });
 
-test('data-change listener passes the event snapshot rather than re-reading stale host data',async()=>{
- const snapshot=[[{value:'identity'}],[{value:'new'},{value:1}]];
- let state,root;
- globalThis.testLoadRuns=async(_config,data)=>({runs:[run(data===snapshot?'new':'cached')],skipped:0});
- function Probe(){state=useTimerRuns(config,true,false);return null;}
- await act(async()=>{root=TestRenderer.create(React.createElement(Probe));});
- try {
-  assert.equal(state.runs[0].id,'cached');
-  await act(async()=>{globalThis.testDataChange({data:snapshot});});
-  assert.equal(state.runs[0].id,'new');
- }finally{await act(async()=>root.unmount());}
-});
-
-test('raw record modifications refresh details using the latest filtered snapshot and unsubscribe on unmount',async()=>{
- const snapshot=[[{value:'identity'}],[{value:'new'},{value:1}]];
+test('dashboard and table events reload records; all subscriptions are removed on unmount',async()=>{
  let state,root,revision=0;
  globalThis.testRecordOff=0;
- globalThis.testLoadRuns=async(_config,data)=>({runs:[run((data===snapshot?'filtered':'cached')+revision)],skipped:0});
+ globalThis.testLoadRuns=async()=>({runs:[run('revision'+revision)],skipped:0});
  function Probe(){state=useTimerRuns(config,true,false);return null;}
  await act(async()=>{root=TestRenderer.create(React.createElement(Probe));});
- await act(async()=>{globalThis.testDataChange({data:snapshot});});
- revision=1;
- await act(async()=>{globalThis.testRecordChange();});
- assert.equal(state.runs[0].id,'filtered1');
- await act(async()=>root.unmount());assert.equal(globalThis.testRecordOff,1);
+ for(const notify of [()=>globalThis.testDataChange({data:[]}),()=>globalThis.testRecordChange(),()=>globalThis.testRecordAdd(),()=>globalThis.testRecordDelete()]) {
+  revision++;
+  await act(async()=>notify());
+  assert.equal(state.runs[0].id,'revision'+revision);
+ }
+ await act(async()=>root.unmount());assert.equal(globalThis.testRecordOff,3);
 });

@@ -45,7 +45,7 @@ export function App() {
     sourceConfig,
     legacyMapping,
     resolveConfig,
-    configReady && !preview && dashboardMode === "edit"
+    configReady && !preview && (dashboardMode === "edit" || Boolean(saved?.fieldMapping))
   );
   const { runs, mode, message, loading, reload, ready } = useTimerRuns(sourceConfig, configReady, preview);
   useEffect(() => {
@@ -197,7 +197,6 @@ export function App() {
           </div>
         </header>
 
-        {!preview && configReady && !sourceConfig.identityFieldId && <p className="save-message" role="status">{t("请选择记录唯一标识，预览并保存后即可应用仪表盘筛选。")}</p>}
         <div className="metrics">
           <div className="metric-card">
             <TimerReset size={16} />
@@ -365,20 +364,11 @@ export function App() {
           value={sourceConfig.durationSecondsFieldId}
           onChange={(durationSecondsFieldId) => updateSourceConfig({ durationSecondsFieldId })}
         />
-        <ConfigSelect
-          disabled={schemaLoading}
-          emptyLabel={t("请选择非空且唯一的字段")}
-          label={t("记录唯一标识")}
-          options={toFieldSelectOptions(schema.fields.filter(field => [1, 2, 1005].includes(field.type)))}
-          value={sourceConfig.identityFieldId || ""}
-          onChange={identityFieldId => updateSourceConfig({ identityFieldId })}
-        />
-        <p className="save-message">{t("推荐使用自动编号字段，用于关联仪表盘筛选结果与原始执行记录。")}</p>
         {schemaMessage && <p className="save-message error">{schemaMessage}</p>}
         {schemaLoading && <p className="save-message">{t("正在读取字段...")}</p>}
         <button
           className="save-button"
-          disabled={saving || schemaLoading || loading || mode === "error" || !sourceConfig.identityFieldId || !schema.fields.some(field => field.id === sourceConfig.identityFieldId && [1, 2, 1005].includes(field.type)) || !isSourceConfigValid(sourceConfig, schema)}
+          disabled={saving || schemaLoading || loading || mode === "error" || !isSourceConfigValid(sourceConfig, schema)}
           onClick={() => void saveConfig(sourceConfig, themeColor)}
           type="button"
         >
@@ -386,6 +376,7 @@ export function App() {
         {saveMessage && <p className="save-message">{t(saveMessage)}</p>}
         <div className="config-note">
           <strong>{t("使用方式")}</strong>
+          <span>{t("数据显示范围由所选数据表或视图决定，不联动仪表盘全局筛选。")}</span>
           <span>{t("保存后回到仪表盘页面，组件会以展示态加载，只保留左侧图表。")}</span>
         </div>
       </aside>}

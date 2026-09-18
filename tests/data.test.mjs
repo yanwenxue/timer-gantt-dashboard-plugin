@@ -52,7 +52,7 @@ test('1000 records use five bounded pages instead of per-cell requests',async()=
 test('empty table stops at the first page',async()=>{
  const t=table({});assert.deepEqual(await readTableRuns(t,config),{runs:[],skipped:0});assert.equal(t.calls.length,1);
 });
-test('201 records load completely for both legacy and filtered configurations, including a selected view',async()=>{
+test('records load completely across pages for the whole table and a selected view',async()=>{
  const rows=Object.fromEntries(Array.from({length:402},(_,i)=>['r'+i,{name:'A',start,end,identity:'RUN-'+i}]));
  const visible=Object.keys(rows).slice(201);
  for(const viewId of ['', 'v']) {
@@ -60,10 +60,7 @@ test('201 records load completely for both legacy and filtered configurations, i
   const legacy=await readTableRuns(t,{...config,viewId});
   assert.equal(legacy.runs.length,ids.length);assert.equal(legacy.skipped,0);
   assert(t.calls.every(call=>call.viewId===(viewId||undefined)));
-  const last=ids.at(-1);
-  const data=[[{value:'identity'}],[{value:rows[last].identity},{value:1}]];
-  const filtered=await readTableRuns(t,{...config,viewId,identityFieldId:'identity'},data);
-  assert.deepEqual(filtered.runs.map(run=>run.id),[last]);
+
  }
 });
 test('a later page failure or broken cursor fails the whole load rather than returning partial records',async()=>{

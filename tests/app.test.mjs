@@ -17,13 +17,13 @@ const { App } = await loadModule('App.tsx', {
     export const base=globalThis.appTestSdk.base; export const bridge=globalThis.appTestSdk.bridge;
     export const DashboardState={Create:'Create',Config:'Config',View:'View',FullScreen:'FullScreen'};
     export const ui={showToast:async()=>true}; export const ToastType={success:'success'};`,
-  './lark-data': 'export const loadLarkRuns=config=>globalThis.appTestLoadRuns(config);',
+  './lark-data': 'export const loadLarkRuns=(...args)=>globalThis.appTestLoadRuns(...args);',
   './TimelineChart': 'export const TimelineChart=props=>globalThis.appTestChart(props); export const taskColor=()=>"#abc";'
 });
 const { makeDashboardConfig, readDashboardConfig } = await loadModule('dashboard-config.ts');
 const { isSourceConfigValid } = await loadModule('source-config.ts');
 const config = id => ({ tableId: id, viewId: '', taskNameFieldId: id + '_name',
-  startTimeFieldId: id + '_start', endTimeFieldId: id + '_end', durationSecondsFieldId: '', identityFieldId: id + '_id' });
+  startTimeFieldId: id + '_start', endTimeFieldId: id + '_end', durationSecondsFieldId: '' });
 const fields = id => [
   { id: id + '_id', name: 'ID', type: 1005 },
   { id: id + '_name', name: '任务名称结构化', type: 1 },
@@ -225,17 +225,22 @@ test('host render notification waits for data AND chart completion, including em
     await act(async()=>chartProps.onRendered());await flush();assert.equal(notifications,1);
   } finally {await act(async()=>root.unmount());}
 });
-test('legacy configurations preserve editor selections but do not read records until a unique key is selected',async()=>{
- const env=setup('Config');sdk.dashboard.getConfig=async()=>({customConfig:{sourceConfig:{...config('A'),identityFieldId:''}}});
+test('existing ID configurations preview and save without any unique-key field',async()=>{
+ const env=setup('Config');sdk.dashboard.getConfig=async()=>({customConfig:{sourceConfig:config('A')}});
+ env.tables[0].getFieldMetaList=async()=>fields('A').filter(field=>field.type!==1005);
  const root=await mount();
- try {assert.equal(save(root).props.disabled,true);assert.match(JSON.stringify(root.toJSON()),/请选择记录唯一标识/);
-  assert.equal(env.loaded.length,0);assert.equal(select(root,'开始时间字段').props.value,'A_start');
-  await act(async()=>select(root,'记录唯一标识').props.onChange({target:{value:'A_id'}}));await flush();
+ try {
   assert.equal(save(root).props.disabled,false);
+  assert(env.loaded.length>0);
+  assert.equal(select(root,'记录唯一标识'),undefined);
+  assert.equal(select(root,'开始时间字段').props.value,'A_start');
+  await act(async()=>save(root).props.onClick());await flush();
+  assert.deepEqual(readDashboardConfig(env.saved[0]).sourceConfig,config('A'));
+  assert.deepEqual(env.saved[0].dataConditions[0].groups,[]);
  }finally{await act(async()=>root.unmount());}
 });
 
-test('legacy name mappings require an upgrade in View and FullScreen and never display unfiltered records',async()=>{
+test('legacy name mappings resolve the saved table and fields in View and FullScreen',async()=>{
  for(const state of ['View','FullScreen']) {
   const env=setup(state);
   const mapping={tableName:'B',taskName:'旧任务',startTime:'旧开始',endTime:'旧结束',durationSeconds:'旧耗时'};
@@ -246,13 +251,15 @@ test('legacy name mappings require an upgrade in View and FullScreen and never d
   sdk.dashboard.getConfig=async()=>({customConfig:{fieldMapping:mapping}});
   const root=await mount();
   try {
-   assert.equal(env.loaded.length,0);
-   assert.match(JSON.stringify(root.toJSON()),/旧配置需要升级/);
+   assert.equal(env.loaded.at(-1).tableId,'B');
+   assert.equal(env.loaded.at(-1).durationSecondsFieldId,'B_duration');
+   assert.doesNotMatch(JSON.stringify(root.toJSON()),/旧配置需要升级/);
    assert.equal(root.root.findAllByType('select').length,0);
-   assert.equal(root.root.findAllByProps({role:'alert'}).length,1);
+   assert.equal(root.root.findAllByProps({role:'alert'}).length,0);
    assert.equal(env.saved.length,0);
    await act(async()=>refresh(root).props.onClick());await flush();
-   assert.equal(env.loaded.length,0);
+   assert.equal(env.loaded.at(-1).tableId,'B');
+   assert.equal(env.loaded.at(-1).durationSecondsFieldId,'B_duration');
    await act(async()=>{for(const callback of env.listeners) callback({data:makeDashboardConfig(config('B'))});});await flush();
    assert.equal(env.loaded.at(-1).tableId,'B');
    assert.doesNotMatch(JSON.stringify(root.toJSON()),/旧配置需要升级/);
@@ -260,11 +267,29 @@ test('legacy name mappings require an upgrade in View and FullScreen and never d
  }
 });
 
-test('a legacy ID configuration cannot bypass migration even when its custom config contains an identity field',async()=>{
- const env=setup('View');sdk.dashboard.getConfig=async()=>({customConfig:{sourceConfig:config('A')}});
- const root=await mount();
- try {assert.equal(env.loaded.length,0);assert.match(JSON.stringify(root.toJSON()),/旧配置需要升级/);}
- finally{await act(async()=>root.unmount());}
+test('released legacy ID widgets render immediately and follow later configuration changes',async()=>{
+ for(const state of ['View','FullScreen']) {
+  const env=setup(state), old=config('A');
+  sdk.dashboard.getConfig=async()=>({dataConditions:[],customConfig:{sourceConfig:old,themeColor:'#123456'}});
+  const calls=[];let chartProps;
+  globalThis.appTestChart=props=>{chartProps=props;return null;};
+  globalThis.appTestLoadRuns=async(source)=>{
+   calls.push({source});
+   return {runs:[{id:'r1',tableId:'A',taskName:'订单同步',start:Date.now()-1000,end:Date.now(),durationSeconds:1}],skipped:0};
+  };
+  const root=await mount();
+  try {
+   assert.deepEqual(calls.at(-1).source,old);
+   assert.equal(chartProps.runs.length,1);
+   assert.equal(root.root.findAllByProps({role:'alert'}).length,0);
+   assert.equal(root.root.findAllByType('select').length,0);
+   assert.doesNotMatch(JSON.stringify(root.toJSON()),/旧配置需要升级/);
+   assert.equal(env.saved.length,0);
+   await act(async()=>refresh(root).props.onClick());await flush();
+   await act(async()=>{for(const cb of env.listeners)cb({data:makeDashboardConfig(config('B'))});});await flush();
+   assert.equal(calls.at(-1).source.tableId,'B');
+  }finally{await act(async()=>root.unmount());}
+ }
 });
 
 test('editing and saving a legacy name mapping migrates all field roles to remappable conditions',async()=>{
@@ -280,19 +305,19 @@ test('editing and saving a legacy name mapping migrates all field roles to remap
  }finally{await act(async()=>root.unmount());}
 });
 
-test('incomplete v2 settings are repairable in the editor and remain blocked in View/FullScreen',async()=>{
+test('incomplete required fields are repairable in the editor and remain blocked in View/FullScreen',async()=>{
  const incomplete=makeDashboardConfig(config('B'),'#123456');
- incomplete.dataConditions[0].groups=[];
+ incomplete.customConfig.sourceFields.endTimeFieldId='';
  const env=setup('Config');sdk.dashboard.getConfig=async()=>incomplete;
  let root=await mount();
  try {
   assert.equal(select(root,'数据表').props.value,'B');
   assert.equal(select(root,'数据表').props.disabled,false);
   assert.equal(select(root,'开始时间字段').props.value,'B_start');
-  assert.equal(save(root).props.disabled,true);
+  assert.equal(save(root).props.disabled,false);
   await act(async()=>refresh(root).props.onClick());await flush();
-  assert.equal(select(root,'记录唯一标识').props.disabled,false);
-  await act(async()=>select(root,'记录唯一标识').props.onChange({target:{value:'B_id'}}));await flush();
+  assert.equal(select(root,'结束时间字段').props.disabled,false);
+  await act(async()=>select(root,'结束时间字段').props.onChange({target:{value:'B_end'}}));await flush();
   assert.equal(save(root).props.disabled,false);
   await act(async()=>save(root).props.onClick());await flush();
   assert.deepEqual(readDashboardConfig(env.saved[0]).sourceConfig,config('B'));
@@ -350,6 +375,37 @@ test('render notification waits for delayed host language/theme, ignores stale c
    if(!fail) {assert.equal(root.root.findByType('main').props.lang,'ja-JP');assert.equal(root.root.findByType('main').props['data-theme'],'dark');}
    await act(async()=>stale());await flush();assert.equal(notifications,0);
    await act(async()=>chartProps.onRendered());await flush();assert.equal(notifications,1);
+  }finally{await act(async()=>root.unmount());}
+ }
+});
+
+test('real config-to-record pipeline restores two identical executions without a unique field',async()=>{
+ const {App:RealApp}=await loadModule('App.tsx',{
+  '@lark-base-open/js-sdk': `export const {dashboard,base,bridge}=globalThis.appTestSdk;
+   export const DashboardState={Create:'Create',Config:'Config',View:'View',FullScreen:'FullScreen'};
+   export const ui={showToast:async()=>true}; export const ToastType={success:'success'};`,
+  './TimelineChart':'export const TimelineChart=props=>globalThis.appTestChart(props); export const taskColor=()=>"#abc";'
+ });
+ for(const state of ['View','FullScreen','Config','Create']) {
+  const env=setup(state);let chartProps;
+  const recordFields={A_name:'same task',A_start:Date.now(),A_end:Date.now()+1000};
+  sdk.base.getTableById=async()=>({id:'A',getRecords:async()=>({hasMore:false,
+   records:['r1','r2'].map(recordId=>({recordId,fields:recordFields}))}),
+   onRecordModify:()=>()=>{},onRecordAdd:()=>()=>{},onRecordDelete:()=>()=>{}});
+  sdk.dashboard.getConfig=async()=>({dataConditions:[],customConfig:{sourceConfig:config('A')}});
+  sdk.dashboard.getData=sdk.dashboard.getPreviewData=async()=>{throw Error('must not require aggregation');};
+  env.tables[0].getFieldMetaList=async()=>fields('A').filter(field=>field.type!==1005);
+  globalThis.appTestChart=props=>{chartProps=props;return null;};
+  let root;await act(async()=>{root=TestRenderer.create(React.createElement(RealApp));});await flush();
+  try {
+   assert.deepEqual(chartProps.runs.map(run=>run.id),['r1','r2']);
+   assert.equal(root.root.findAllByProps({role:'alert'}).length,0);
+   if(state==='Config'||state==='Create') {
+    assert.equal(select(root,'记录唯一标识'),undefined);
+    assert.equal(save(root).props.disabled,false);
+    await act(async()=>save(root).props.onClick());await flush();
+    assert.deepEqual(readDashboardConfig(env.saved[0]).sourceConfig,config('A'));
+   }
   }finally{await act(async()=>root.unmount());}
  }
 });

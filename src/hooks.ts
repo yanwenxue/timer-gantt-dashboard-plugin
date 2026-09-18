@@ -1,5 +1,4 @@
 import { t, useMessage } from "./i18n";
-import type { IData } from "@lark-base-open/js-sdk";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BaseSchema, DataSourceConfig, LegacyFieldMapping, DashboardMode, RuntimeMode, TimerRun } from "./types";
 import { isSameSourceConfig, isSourceConfigReady } from "./source-config";
@@ -17,23 +16,19 @@ export function useTimerRuns(config: DataSourceConfig, enabled: boolean, preview
   const [settledConfig, setSettledConfig] = useState<DataSourceConfig | null>(null);
   const requests = useRef(createLatestRequest());
   const previousConfig = useRef(config);
-  const reload = useCallback(async (changedData?: IData) => {
+  const reload = useCallback(async () => {
     const current = requests.current.begin();
     if (preview) return;
     if (!enabled) { setRuns([]); setLoading(false); setSettledConfig(null); return; }
     if (!isSourceConfigReady(config)) {
       setRuns([]); setMode("lark"); setLoading(false); setSettledConfig(config); setMessage("请先选择数据表和必需字段"); return;
     }
-    if (!config.identityFieldId) {
-      setRuns([]); setMode("lark"); setLoading(false); setSettledConfig(config);
-      setMessage("请选择记录唯一标识，预览并保存后即可应用仪表盘筛选。"); return;
-    }
     setLoading(true);
     if (!isSameSourceConfig(previousConfig.current, config)) setRuns([]);
     previousConfig.current = config;
     setMessage("正在读取数据…");
     try {
-      const result = await loadLarkRuns(config, changedData);
+      const result = await loadLarkRuns(config);
       if (!current()) return;
       setRuns(result.runs); setMode("lark");
       setMessage(result.skipped ? "已跳过 {count} 条名称或时间无效的记录" : result.runs.length ? "" : "当前数据范围暂无有效执行记录", { count: result.skipped });
@@ -47,23 +42,23 @@ export function useTimerRuns(config: DataSourceConfig, enabled: boolean, preview
     if (preview || !enabled) { void reload(); return; }
     let active = true;
     let off: (() => void) | undefined;
-    let offRecords: (() => void) | undefined;
-    let latestData: IData | undefined;
+    const recordSubscriptions: Array<() => void> = [];
     void import("@lark-base-open/js-sdk").then(({ dashboard, base }) => {
       if (!active) return;
-      // Consume the event snapshot: immediately re-reading getData can return the
-      // previous filter result while the host is still updating its cached data.
-      off = dashboard.onDataChange(({ data }) => { latestData = data; void reload(data); });
+      off = dashboard.onDataChange(() => { void reload(); });
       void reload();
-      // Editing an interval/duration may leave the dashboard record counts
-      // unchanged, so the host does not emit a dashboard data-change event.
+      // Read actual records on all changes, including edits that keep counts unchanged.
       if (config.tableId) void Promise.resolve().then(() => base.getTableById(config.tableId)).then(table => {
-        if (active) offRecords = table.onRecordModify(() => { void reload(latestData); });
+        if (!active) return;
+        const refresh = () => { void reload(); };
+        recordSubscriptions.push(table.onRecordModify(refresh));
+        recordSubscriptions.push(table.onRecordAdd(refresh));
+        recordSubscriptions.push(table.onRecordDelete(refresh));
       }).catch(() => {});
     }).catch(error => {
       if (active) { setMode("error"); setMessage(String(error)); }
     });
-    return () => { active = false; off?.(); offRecords?.(); requests.current.invalidate(); };
+    return () => { active = false; off?.(); recordSubscriptions.forEach(unsubscribe => unsubscribe()); requests.current.invalidate(); };
   }, [preview, enabled, reload]);
   return { runs, mode, message, loading, reload, ready: preview || (!loading && settledConfig === config) };
 }

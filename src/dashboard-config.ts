@@ -11,8 +11,8 @@ export function makeDashboardConfig(source: DataSourceConfig, themeColor?: strin
   const condition: IDataCondition = {
     tableId: source.tableId,
     dataRange: source.viewId ? { type: "VIEW" as SourceType.VIEW, viewId: source.viewId, viewName: "" } : { type: "ALL" as SourceType.ALL },
-    groups: source.identityFieldId ? [{ fieldId: source.identityFieldId }] : [],
-    // Field-level COUNTA is not supported by the pinned SDK/host. Count records instead.
+    groups: [],
+    // Keep table/view references remappable when the host copies this widget.
     series: "COUNTA"
   };
   // Field IDs are retained within the copied table; never persist the source table ID here.
@@ -22,25 +22,33 @@ export function makeDashboardConfig(source: DataSourceConfig, themeColor?: strin
 
 export function readDashboardConfig(config: IConfig, { allowIncomplete = false } = {}): SavedConfig {
   const custom = config.customConfig ?? {};
-  if (custom.version !== 3 && !allowIncomplete) {
-    throw new Error(t("旧配置需要升级：请打开组件配置，选择记录唯一标识并保存。"));
+  if (custom.version === undefined) {
+    // Earlier releases stored explicit IDs or field names in customConfig.
+    // Ignore retired settings such as identityFieldId when reading them.
+    const previous = custom.sourceConfig as Partial<DataSourceConfig> | undefined;
+    const sourceConfig = previous ? Object.fromEntries(Object.keys(emptySourceConfig).map(key =>
+      [key, previous[key as keyof DataSourceConfig] ?? ""])) as DataSourceConfig : undefined;
+    const fieldMapping = custom.fieldMapping as Partial<LegacyFieldMapping> | undefined;
+    if (!allowIncomplete && !fieldMapping && (!sourceConfig || !isSourceConfigReady(sourceConfig))) {
+      throw new Error(t("仪表盘配置不完整，请重新配置字段"));
+    }
+    return { sourceConfig, fieldMapping, themeColor: custom.themeColor };
   }
-  if (custom.version !== 2 && custom.version !== 3) return custom as SavedConfig;
+  if (custom.version !== 2 && custom.version !== 3) throw new Error(t("仪表盘配置不完整，请重新配置字段"));
   const conditions = Array.isArray(config.dataConditions) ? config.dataConditions : [config.dataConditions];
   const condition = conditions[0];
   const indices = custom.sourceRoles as Record<string, number> | undefined;
   const sourceFields = custom.sourceFields as Record<string, unknown> | undefined;
   const series: ISeries[] = Array.isArray(condition?.series) ? condition.series : [];
   const source = { ...emptySourceConfig, tableId: condition?.tableId ?? "",
-    viewId: condition?.dataRange?.type === "VIEW" ? condition.dataRange.viewId : "",
-    identityFieldId: condition?.groups?.[0]?.fieldId ?? "" };
+    viewId: condition?.dataRange?.type === "VIEW" ? condition.dataRange.viewId : "" };
   for (const role of roles) {
     const index = indices?.[role] ?? -1;
     source[role] = custom.version === 3
       ? (typeof sourceFields?.[role] === "string" ? sourceFields[role] : "")
       : series[index]?.fieldId ?? "";
   }
-  // An editor can repair missing fields; a viewer must never bypass dashboard filtering.
-  if (!allowIncomplete && (!isSourceConfigReady(source) || !source.identityFieldId)) throw new Error(t("仪表盘配置不完整，请重新配置字段"));
+  // Editors may repair incomplete settings; viewers need the required field mappings.
+  if (!allowIncomplete && !isSourceConfigReady(source)) throw new Error(t("仪表盘配置不完整，请重新配置字段"));
   return { themeColor: custom.themeColor, sourceConfig: source };
 }

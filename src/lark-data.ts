@@ -1,5 +1,5 @@
 import { t } from "./i18n";
-import type { IData, IRecord, ITable } from "@lark-base-open/js-sdk";
+import type { IRecord, ITable } from "@lark-base-open/js-sdk";
 import type { DataSourceConfig, TimerRun } from "./types";
 import { makeDashboardConfig } from "./dashboard-config";
 import { isSourceConfigReady } from "./source-config";
@@ -40,32 +40,11 @@ async function readRecords(table: ITable, viewId: string): Promise<IRecord[]> {
   } while (true);
 }
 
-export async function readTableRuns(table: ITable, config: DataSourceConfig, data?: IData): Promise<RunsResult> {
+export async function readTableRuns(table: ITable, config: DataSourceConfig): Promise<RunsResult> {
   const records = await readRecords(table, config.viewId);
-  let allowedIds: Set<string> | undefined;
-  if (data) {
-    const keyToId = new Map<string, string>();
-    for (const record of records) {
-      const key = cellText(record.fields[config.identityFieldId!]);
-      if (!key.trim() || keyToId.has(key)) throw new Error(t("记录唯一标识必须非空且不重复，请选择自动编号或唯一文本字段"));
-      keyToId.set(key, record.recordId);
-    }
-    allowedIds = new Set();
-    for (const row of data.slice(1)) {
-      // A retained group with zero counts is not a matching execution.
-      if (!row.slice(1).some(cell => typeof cell.value === "number" && cell.value > 0)) continue;
-      const key = row[0]?.value;
-      if (key == null) throw new Error(t("筛选结果缺少记录标识，请检查唯一标识字段"));
-      const id = keyToId.get(String(key));
-      // Fail closed if reads straddle a data change; never show unfiltered records.
-      if (!id) throw new Error(t("数据已变化或标识格式不匹配，请刷新重试"));
-      allowedIds.add(id);
-    }
-  }
   const runs: TimerRun[] = [];
   let skipped = 0;
   for (const { recordId: id, fields } of records) {
-    if (allowedIds && !allowedIds.has(id)) continue;
     const taskName = cellText(fields[config.taskNameFieldId]).trim();
     const start = fields[config.startTimeFieldId];
     const end = fields[config.endTimeFieldId];
@@ -84,12 +63,8 @@ export async function readTableRuns(table: ITable, config: DataSourceConfig, dat
   return { runs: runs.sort(byStartTime), skipped };
 }
 
-export async function loadLarkRuns(config: DataSourceConfig, changedData?: IData): Promise<RunsResult> {
+export async function loadLarkRuns(config: DataSourceConfig): Promise<RunsResult> {
   if (!isSourceConfigReady(config)) throw new Error(t("请先选择数据表和必需字段"));
-  if (!config.identityFieldId) throw new Error(t("请选择记录唯一标识，预览并保存后即可应用仪表盘筛选。"));
-  const { base, dashboard, DashboardState } = await import("@lark-base-open/js-sdk");
-  const data = await (dashboard.state === DashboardState.Create || dashboard.state === DashboardState.Config
-    ? dashboard.getPreviewData(makeDashboardConfig(config).dataConditions) : changedData ?? dashboard.getData());
-  if (!Array.isArray(data)) throw new Error(t("筛选结果缺少记录标识，请检查唯一标识字段"));
-  return readTableRuns(await base.getTableById(config.tableId), config, data);
+  const { base } = await import("@lark-base-open/js-sdk");
+  return readTableRuns(await base.getTableById(config.tableId), config);
 }

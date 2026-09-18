@@ -14,6 +14,7 @@ const subscribe = (listener: () => void) => { listeners.add(listener); return ()
 export const useLanguage = () => useSyncExternalStore(subscribe, getLanguage);
 // Chinese is the source text. User data and host error messages are never translated.
 export const translations: Record<string, readonly [string, string]> = {
+  "数据显示范围由所选数据表或视图决定，不联动仪表盘全局筛选。": ["The selected table or view determines the data range. Dashboard-wide filters do not apply.", "選択したテーブルまたはビューの範囲を表示します。ダッシュボード全体の絞り込みには連動しません。"],
   "记录分页异常，请刷新重试": ["Record pagination failed. Refresh and try again.", "レコードのページ取得に失敗しました。更新して再試行してください。"],
   "仪表盘配置不完整，请重新配置字段": ["Dashboard settings are incomplete. Configure the fields again.", "ダッシュボードの設定が不完全です。フィールドを設定し直してください。"],
   "示例数据没有对应的多维表格行": ["Demo data has no corresponding record", "サンプルデータに対応するレコードはありません"],
@@ -22,8 +23,6 @@ export const translations: Record<string, readonly [string, string]> = {
   "当前无法打开行详情，请确认在飞书仪表盘环境中使用": ["Cannot open record details. Use this plugin in a Base dashboard.", "レコードの詳細を開けません。Base ダッシュボードでご利用ください。"],
   "秒级甘特图": ["Second-level Gantt Chart", "秒単位ガントチャート"],
   "刷新数据": ["Refresh data", "データを更新"],
-  "旧配置需要升级：请打开组件配置，选择记录唯一标识并保存。": ["Update required: open widget settings, select a unique record key, and save.", "旧設定の更新が必要です。ウィジェットの設定でレコードの一意キーを選択し、保存してください。"],
-  "请选择记录唯一标识，预览并保存后即可应用仪表盘筛选。": ["Select a unique record key, preview, and save to apply dashboard filters.", "レコードの一意キーを選択し、プレビューして保存すると、ダッシュボードのフィルターが適用されます。"],
   "执行记录": ["Executions", "実行記録"], "任务类型": ["Task types", "タスクの種類"],
   "最长耗时": ["Longest duration", "最長所要時間"], "累计耗时": ["Total duration", "合計所要時間"],
   "飞书数据": ["Base data", "Base データ"], "读取失败": ["Read failed", "読み込み失敗"], "演示数据": ["Demo data", "サンプルデータ"],
@@ -41,9 +40,6 @@ export const translations: Record<string, readonly [string, string]> = {
   "未找到日期时间字段": ["No date/time fields", "日時フィールドがありません"],
   "开始时间字段": ["Start time field", "開始時刻フィールド"], "结束时间字段": ["End time field", "終了時刻フィールド"],
   "按开始/结束时间计算": ["Calculate from start/end times", "開始・終了時刻から計算"], "耗时字段": ["Duration field", "所要時間フィールド"],
-  "请选择非空且唯一的字段": ["Select a non-empty, unique field", "空でなく一意の値を持つフィールドを選択"],
-  "记录唯一标识": ["Unique record key", "レコードの一意キー"],
-  "推荐使用自动编号字段，用于关联仪表盘筛选结果与原始执行记录。": ["Use an autonumber field to match dashboard filter results to individual execution records.", "自動採番フィールドを使用して、ダッシュボードの絞り込み結果と各実行記録を対応付けます。"],
   "正在读取字段...": ["Loading fields…", "フィールドを読み込み中…"], "保存到仪表盘": ["Save to dashboard", "ダッシュボードに保存"],
   "使用方式": ["How to use", "使い方"],
   "保存后回到仪表盘页面，组件会以展示态加载，只保留左侧图表。": ["After saving, return to the dashboard to see the chart without the settings panel.", "保存後にダッシュボードに戻ると、設定パネルを除いたチャートが表示されます。"],
@@ -72,9 +68,6 @@ export const translations: Record<string, readonly [string, string]> = {
   "已保存，可回到仪表盘查看": ["Saved. Return to the dashboard to view it.", "保存しました。ダッシュボードで確認できます。"],
   "配置已保存": ["Settings saved", "設定を保存しました"], "请重试": ["Try again", "再試行してください"],
   "无法读取多维表格结构": ["Cannot load the Base schema", "Base の構造を読み込めません"],
-  "记录唯一标识必须非空且不重复，请选择自动编号或唯一文本字段": ["Record keys must be non-empty and unique. Choose an autonumber or unique text field.", "レコードのキーは空でなく、一意である必要があります。自動採番または一意のテキストフィールドを選択してください。"],
-  "筛选结果缺少记录标识，请检查唯一标识字段": ["Filter results contain no record key. Check the key field.", "絞り込み結果にレコードのキーがありません。一意キーのフィールドを確認してください。"],
-  "数据已变化或标识格式不匹配，请刷新重试": ["Data changed or record key formats differ. Refresh and try again.", "データが変更されたか、キーの形式が一致しません。更新して再試行してください。"],
   "当前 Base 没有可读取的数据表": ["No readable tables in this Base", "この Base に読み取り可能なテーブルがありません"],
   "今天": ["Today", "今日"], "最近3天": ["Last 3 days", "過去3日"], "最近7天": ["Last 7 days", "過去7日"],
   "全部": ["All", "すべて"], "自选": ["Custom", "指定"],

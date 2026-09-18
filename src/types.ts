@@ -19,7 +19,6 @@ export type LegacyFieldMapping = {
 export type DataSourceConfig = {
   tableId: string;
   viewId: string;
-  identityFieldId?: string;
   taskNameFieldId: string;
   startTimeFieldId: string;
   endTimeFieldId: string;
